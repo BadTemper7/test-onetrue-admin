@@ -1,19 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
-  Eye,
   Search,
   ShieldCheck,
   SlidersHorizontal,
   UserCog,
   UserPlus,
   Users,
-  Pencil,
-  Trash2,
-  X,
 } from "lucide-react"
 import Alert from "../../components/Alert"
+import ModalCloseButton from "../../components/ui/ModalCloseButton"
 import { api, getApiError } from "../../lib/api"
 import Pagination from "../../components/ui/Pagination"
+import TableCrudActions from "../../components/ui/TableCrudActions"
 import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
 import {
@@ -202,6 +200,11 @@ const AdminAccounts = () => {
     })
   }
 
+  const openUserEdit = (user) => {
+    openUserDetails(user)
+    setIsEditingUser(true)
+  }
+
   const updateEditPermission = (moduleName, action, checked) => {
     setEditUserForm((current) => {
       const existing = current.permissions?.[moduleName] || {}
@@ -238,14 +241,17 @@ const AdminAccounts = () => {
     }
   }
 
-  const deleteSelectedUser = async () => {
-    if (!selectedUser || !window.confirm(`Delete ${selectedUser.name}? This action cannot be undone.`)) return
+  const deleteSelectedUser = async (userOverride = selectedUser) => {
+    const userToDelete = userOverride
+    if (!userToDelete || !window.confirm(`Delete ${userToDelete.name}? This action cannot be undone.`)) return
     setLoading(true)
     setError("")
     try {
-      const { data } = await api.delete(`/admin/users/${selectedUser.id}`)
-      setSelectedUser(null)
-      setEditUserForm(null)
+      const { data } = await api.delete(`/admin/users/${userToDelete.id}`)
+      if (selectedUser?.id === userToDelete.id) {
+        setSelectedUser(null)
+        setEditUserForm(null)
+      }
       setMessage(data.message || "Account deleted successfully.")
       await loadAdmins()
     } catch (err) {
@@ -440,7 +446,7 @@ const AdminAccounts = () => {
                 <th className="px-4 py-3">Email</th>
                 <th className="px-4 py-3">Role</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Action</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -462,13 +468,14 @@ const AdminAccounts = () => {
                     </span>
                   </td>
                   <td className="px-4 py-4 text-right">
-                    <button
-                      type="button"
-                      onClick={() => openUserDetails(user)}
-                      className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-slate-800"
-                    >
-                      <Eye size={15} /> View Details
-                    </button>
+                    <TableCrudActions
+                      recordLabel={user.name}
+                      onView={() => openUserDetails(user)}
+                      onEdit={() => openUserEdit(user)}
+                      onDelete={() => deleteSelectedUser(user)}
+                      deleteDisabled={Boolean(user.isLockedSeed)}
+                      deleteLabel={user.isLockedSeed ? `${user.name} is a protected system account` : `Delete ${user.name}`}
+                    />
                   </td>
                 </tr>
               ))}
@@ -496,13 +503,7 @@ const AdminAccounts = () => {
                 <h3 className="mt-1 text-2xl font-black text-slate-950">Create Admin Account</h3>
                 <p className="mt-1 text-sm font-semibold text-slate-500">Add the user information and access level.</p>
               </div>
-              <button
-                type="button"
-                onClick={closeCreateModal}
-                className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-600 hover:bg-slate-200"
-              >
-                <X size={18} />
-              </button>
+              <ModalCloseButton onClick={closeCreateModal} label="Close create account modal" />
             </div>
 
             <form onSubmit={createAdmin} className="space-y-5 p-5">
@@ -634,13 +635,7 @@ const AdminAccounts = () => {
                   <span className={`rounded-full px-3 py-1 text-xs font-black capitalize ${statusClass(selectedUser.status)}`}>{selectedUser.status || "unknown"}</span>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setSelectedUser(null)}
-                className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-600 hover:bg-slate-200"
-              >
-                <X size={18} />
-              </button>
+              <ModalCloseButton onClick={() => setSelectedUser(null)} label="Close account details" />
             </div>
 
             <div className="space-y-5 p-5">
@@ -674,9 +669,12 @@ const AdminAccounts = () => {
                   </div>
                 </>
               )}
-              <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
-                {isEditingUser ? <><button type="button" className="btn-secondary" onClick={() => setIsEditingUser(false)} disabled={loading}>Cancel</button><button type="button" className="btn-primary" onClick={saveSelectedUser} disabled={loading}>{loading ? "Saving..." : "Save Changes"}</button></> : <><button type="button" className="btn-secondary !text-red-700" onClick={deleteSelectedUser} disabled={loading || selectedUser.isLockedSeed}><Trash2 size={16} /> Delete</button><button type="button" className="btn-primary" onClick={() => setIsEditingUser(true)}><Pencil size={16} /> Edit</button></>}
-              </div>
+              {isEditingUser && (
+                <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+                  <button type="button" className="btn-secondary" onClick={() => setIsEditingUser(false)} disabled={loading}>Cancel</button>
+                  <button type="button" className="btn-primary" onClick={saveSelectedUser} disabled={loading}>{loading ? "Saving..." : "Save Changes"}</button>
+                </div>
+              )}
             </div>
           </div>
         </div>

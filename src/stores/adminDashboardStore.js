@@ -5,6 +5,7 @@ const emptyMetrics = {
   containersReceived: 0,
   containersReleased: 0,
   currentInventory: 0,
+  localContainers: 0,
   availableYardCapacity: 0,
   totalYardCapacity: 0,
   occupiedYardCapacity: 0,
@@ -15,6 +16,7 @@ const emptyMetrics = {
   revenueSubtotal: 0,
   revenueVat: 0,
   overstayingContainers: 0,
+  topCustomer: null,
 };
 
 export const useAdminDashboardStore = create((set, get) => ({

@@ -1,16 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { CalendarClock, Edit3, MapPin, PackageCheck, RefreshCw, Search, SlidersHorizontal, Warehouse, X } from "lucide-react"
+import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Database, MapPin, PackageCheck, Plus, RefreshCw, Search, SlidersHorizontal, Upload, Warehouse } from "lucide-react"
 import Alert from "../../components/Alert"
-import { api, getApiError } from "../../lib/api"
+import ModalCloseButton from "../../components/ui/ModalCloseButton"
+import { api, getApiError, resolveFileUrl } from "../../lib/api"
 import Pagination from "../../components/ui/Pagination"
+import TableCrudActions from "../../components/ui/TableCrudActions"
+import TableActionButton from "../../components/ui/TableActionButton"
+import WorkflowDecisionPanel from "../../components/ui/WorkflowDecisionPanel"
+import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
+import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
+import AvailableSlotPicker from "../../components/ui/AvailableSlotPicker"
 import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
+import { useAuthStore } from "../../stores/authStore"
+import { hasModulePermission } from "../../lib/permissions"
+
+const DEFAULT_INVENTORY_STATUS = "gate_in_approved"
 
 const bookingStatusesForInventory = [
   "gate_in_approved",
   "stored_in_assigned_area",
   "gate_out_requested",
   "gate_out_approved",
+  "gate_out_reversal_requested",
 ]
 
 const statusLabel = {
@@ -19,6 +31,7 @@ const statusLabel = {
   stored_in_assigned_area: "Stored in Assigned Area",
   gate_out_requested: "Gate-Out Requested",
   gate_out_approved: "Gate-Out Approved",
+  gate_out_reversal_requested: "Gate-Out Reversal Requested",
   completed_gate_out_done: "Completed / Gate-Out Done",
 }
 
@@ -27,19 +40,21 @@ const billingLabel = {
   payment_submitted: "Payment Submitted",
   payment_under_review: "Payment Under Review",
   payment_rejected: "Payment Rejected",
+  additional_payment_required: "Additional Payment Required",
   paid_approved: "Paid / Approved",
 }
 
 const statusClass = (status) => {
   if (status === "gate_in_approved") return "bg-amber-50 text-amber-700"
   if (status === "stored_in_assigned_area") return "bg-blue-50 text-blue-700"
-  if (["gate_out_requested", "gate_out_approved"].includes(status)) return "bg-blue-50 text-blue-700"
+  if (["gate_out_requested", "gate_out_approved", "gate_out_reversal_requested"].includes(status)) return "bg-blue-50 text-blue-700"
   return "bg-slate-100 text-slate-700"
 }
 
 const billingClass = (status) => {
   if (status === "paid_approved") return "bg-blue-50 text-blue-700"
   if (status === "payment_under_review" || status === "payment_submitted") return "bg-amber-50 text-amber-700"
+  if (status === "additional_payment_required") return "bg-amber-50 text-amber-700"
   if (status === "payment_rejected") return "bg-red-50 text-red-700"
   return "bg-slate-100 text-slate-700"
 }
@@ -50,6 +65,53 @@ const formatDate = (value) => {
 }
 
 const getTeu = (size) => Number(size) === 40 ? 2 : 1
+const getFeu = (size) => Number(size) === 40 ? 1 : 0.5
+
+const getRequiredBlockCapacity = (containerSize, blockContainerSize) => {
+  if (Number(blockContainerSize) === 20) return Number(containerSize) === 40 ? 2 : 1
+  return Number(containerSize) === 20 ? 0.5 : 1
+}
+
+const blockHasContainerCapacity = (block, containerSize) => {
+  if (!block) return false
+  return Number(block.availableSlots || 0) >= getRequiredBlockCapacity(containerSize, block.containerSize)
+}
+
+const blockHasRelocationCapacity = (block, container) => {
+  if (!block || !container) return false
+  const required = getRequiredBlockCapacity(container.containerSize, block.containerSize)
+  const currentCredit = String(block.id) === String(container.block || "") ? required : 0
+  return Number(block.availableSlots || 0) + currentCredit >= required
+}
+
+const chooseAreaLocationBlock = ({ blocks = [], area, containerSize, container = null, preferredBlockId = "" }) => {
+  const activeBlocks = blocks.filter((block) => (block.status || "active") === "active")
+  const withCapacity = activeBlocks.filter((block) => container
+    ? blockHasRelocationCapacity(block, container)
+    : blockHasContainerCapacity(block, containerSize))
+
+  if (preferredBlockId) {
+    const preferred = withCapacity.find((block) => String(block.id) === String(preferredBlockId))
+    if (preferred) return preferred
+  }
+
+  const areaCode = String(area?.code || "").trim().toLowerCase()
+  const areaName = String(area?.name || "").trim().toLowerCase()
+  return withCapacity.find((block) => areaCode && String(block.code || "").trim().toLowerCase() === areaCode)
+    || withCapacity.find((block) => areaName && String(block.name || "").trim().toLowerCase() === areaName)
+    || withCapacity[0]
+    || null
+}
+
+const getPlacementKeys = ({ bay, row, tier, containerSize, blockContainerSize }) => {
+  if (!bay || !row || !tier) return []
+  const firstBay = Number(bay)
+  const keys = [`${firstBay}-${Number(row)}-${Number(tier)}`]
+  if (Number(containerSize) === 40 && Number(blockContainerSize) === 20) {
+    keys.push(`${firstBay + 1}-${Number(row)}-${Number(tier)}`)
+  }
+  return keys
+}
 
 const getInventoryEnteredTime = (container) => {
   const value = container.inventoryEnteredAt
@@ -59,6 +121,13 @@ const getInventoryEnteredTime = (container) => {
     || container.createdAt
   const time = value ? new Date(value).getTime() : 0
   return Number.isFinite(time) ? time : 0
+}
+
+const getAreaSlotLabel = (container) => {
+  if (container?.bay && container?.row && container?.tier) {
+    return `B${container.bay}-R${container.row}-T${container.tier}`
+  }
+  return container?.slotNumber || "No slot"
 }
 
 const Field = ({ label, children, hint }) => (
@@ -83,96 +152,505 @@ const StatCard = ({ label, value, icon: Icon }) => (
   </div>
 )
 
-const LocationModal = ({ open, container, areas, blocks, slots, loadingBlocks, saving, onClose, onAreaChange, onBlockChange, onSubmit, form, setForm }) => {
+const LocationModal = ({ open, container, areas, blocks, slots, loadingBlocks, loadingSlots, saving, onClose, onAreaChange, onSubmit, form, setForm }) => {
+  const selectedArea = areas.find((area) => area.id === form.areaId)
   const selectedBlock = blocks.find((block) => block.id === form.blockId)
-  const currentSlotKey = container ? `${container.bay}-${container.row}-${container.tier}` : ""
+  const isCurrentBlock = Boolean(selectedBlock && String(selectedBlock.id) === String(container?.block || ""))
+  const selectedBlockHasCapacity = blockHasRelocationCapacity(selectedBlock, container)
+  const ignoredUnavailableKeys = isCurrentBlock
+    ? getPlacementKeys({
+        bay: container?.bay,
+        row: container?.row,
+        tier: container?.tier,
+        containerSize: container?.containerSize,
+        blockContainerSize: selectedBlock?.containerSize,
+      })
+    : []
+  const hasSelectedSlot = Boolean(form.areaId && form.blockId && form.bay && form.row && form.tier)
 
   if (!open || !container) return null
 
-  const handleChange = (event) => {
-    const { name, value } = event.target
-    setForm((current) => ({ ...current, [name]: value }))
-  }
-
   return (
     <div className="fixed inset-0 z-[9998] grid place-items-center bg-slate-950/[0.55] p-4 backdrop-blur-sm">
-      <div className="w-full max-w-3xl overflow-hidden rounded-[1.5rem] bg-white shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
+      <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-[1.5rem] bg-white shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white p-5">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-700">
               <MapPin size={14} /> Relocate Container
             </div>
             <h2 className="mt-3 text-2xl font-black text-slate-950">{container.containerNumber}</h2>
             <p className="mt-1 text-sm font-semibold text-slate-500">
-              Current location: {container.areaName || "No area"} / {container.blockCode || container.blockName || "No block"} / {container.slotNumber || "No slot"}
+              Current location: {container.areaName || "No area"} / {getAreaSlotLabel(container)}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-600 hover:bg-slate-200">
-            <X size={18} />
-          </button>
+          <ModalCloseButton onClick={onClose} label="Close location form" />
         </div>
 
         <form onSubmit={onSubmit} className="space-y-5 p-5">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Yard Area">
-              <select className="input" name="areaId" value={form.areaId} onChange={(event) => onAreaChange(event.target.value)} required>
-                <option value="">Select area</option>
-                {areas.map((area) => (
-                  <option key={area.id} value={area.id}>{area.name} • {area.availableSlots ?? 0} TEU available</option>
-                ))}
-              </select>
-            </Field>
+          <Field label="Yard Area" hint="Choose an area and the system will show all available Bay, Row, and Tier positions.">
+            <select className="input" name="areaId" value={form.areaId} onChange={(event) => onAreaChange(event.target.value)} required>
+              <option value="">Select area</option>
+              {areas.map((area) => (
+                <option key={area.id} value={area.id}>{area.name} • {area.availableSlots ?? 0} TEU available</option>
+              ))}
+            </select>
+          </Field>
 
-            <Field label="Block">
-              <select className="input" name="blockId" value={form.blockId} onChange={(event) => onBlockChange(event.target.value)} required disabled={!form.areaId || loadingBlocks}>
-                <option value="">{loadingBlocks ? "Loading blocks..." : "Select block"}</option>
-                {blocks.map((block) => (
-                  <option key={block.id} value={block.id}>{block.code} - {block.name} • {block.containerSize}ft • {block.availableSlots ?? 0} TEU left</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-
-          {selectedBlock && (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-600">
-              Block limit: Bay {selectedBlock.bayCount || selectedBlock.lineCount || 1}, Row {selectedBlock.rowCount || 1}, Tier {selectedBlock.tierCount || 1}. The backend will reject occupied or reserved slots.
+          {form.areaId && loadingBlocks && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm font-bold text-slate-600">
+              Loading available slots for this yard area...
             </div>
           )}
 
-          <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Bay">
-              <input className="input" name="bay" type="number" min="1" max={selectedBlock?.bayCount || selectedBlock?.lineCount || undefined} value={form.bay} onChange={handleChange} required />
-            </Field>
-            <Field label="Row">
-              <input className="input" name="row" type="number" min="1" max={selectedBlock?.rowCount || undefined} value={form.row} onChange={handleChange} required />
-            </Field>
-            <Field label="Tier">
-              <input className="input" name="tier" type="number" min="1" max={selectedBlock?.tierCount || undefined} value={form.tier} onChange={handleChange} required />
-            </Field>
-          </div>
+          {selectedBlock && !loadingBlocks && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-600">
+              {selectedArea?.name || "Selected yard area"}: Bay {selectedBlock.bayCount || selectedBlock.lineCount || 1}, Row {selectedBlock.rowCount || 1}, Tier {selectedBlock.tierCount || 1}. {hasSelectedSlot ? `Selected location: B${form.bay}-R${form.row}-T${form.tier}.` : "Choose an available slot below."}
+            </div>
+          )}
 
-          {slots.length > 0 && (
-            <div className="rounded-2xl border border-slate-200 p-4">
-              <div className="text-xs font-black uppercase tracking-wide text-slate-500">Unavailable slots in selected block</div>
-              <div className="mt-3 flex max-h-32 flex-wrap gap-2 overflow-y-auto">
-                {slots.slice(0, 80).map((slot) => {
-                  const isCurrent = slot.key === currentSlotKey
-                  return (
-                    <span key={`${slot.key}-${slot.reference}`} className={`rounded-full px-3 py-1 text-xs font-black ${isCurrent ? "bg-emerald-50 text-emerald-700" : slot.type === "occupied" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}`}>
-                      B{slot.bay} R{slot.row} T{slot.tier}{isCurrent ? " • current" : ""}
-                    </span>
-                  )
-                })}
-                {slots.length > 80 && <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-500">+{slots.length - 80} more</span>}
-              </div>
+          {form.areaId && !loadingBlocks && selectedBlock && (
+            <AvailableSlotPicker
+              block={selectedBlock}
+              unavailableSlots={slots}
+              containerSize={container.containerSize}
+              selectedBay={form.bay}
+              selectedRow={form.row}
+              selectedTier={form.tier}
+              ignoredUnavailableKeys={ignoredUnavailableKeys}
+              loading={loadingSlots}
+              disabled={!selectedBlockHasCapacity}
+              emptyMessage="No available slot can fit this container in the selected yard area. Choose another area."
+              onSelect={(slot) => setForm((current) => ({ ...current, bay: slot.bay, row: slot.row, tier: slot.tier }))}
+            />
+          )}
+
+          {form.areaId && !loadingBlocks && !selectedBlock && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm font-bold text-red-700">
+              No available slot can fit this container in the selected yard area. Choose another area.
             </div>
           )}
 
           <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Saving..." : "Save New Location"}</button>
+            <button type="submit" className="btn-primary" disabled={saving || !hasSelectedSlot}>{saving ? "Saving..." : "Save New Location"}</button>
           </div>
         </form>
+      </div>
+    </div>
+  )
+}
+
+
+const legacyConditionOptions = ["GOOD", "DENTED", "RUST", "HOLE", "DOOR DAMAGE", "OTHER"]
+
+const createLegacyForm = () => ({
+  clientId: "",
+  containerNumber: "",
+  containerSize: "20",
+  containerType: "dry",
+  containerLoadStatus: "empty",
+  rateType: "local",
+  shippingLine: "",
+  sealNumber: "",
+  sealIntact: "",
+  gateInConditions: ["GOOD"],
+  gateInConditionOther: "",
+  inspectionRemarks: "",
+  truckPlateNumber: "",
+  driverName: "",
+  driverLicenseNumber: "",
+  hauler: "",
+  scheduledDateIn: new Date().toISOString().slice(0, 10),
+  scheduledTimeIn: new Date().toTimeString().slice(0, 5),
+  historicalSourceReference: "",
+  legacyRegistrationReason: "Existing container was already stored before the OTLI system was implemented.",
+  areaId: "",
+  blockId: "",
+  bay: "",
+  row: "",
+  tier: "",
+  billingStartMethod: "historical_gate_in",
+  isVatApplicable: "true",
+  openingBalanceAmount: "0",
+  openingCreditAmount: "0",
+})
+
+const LegacyContainerModal = ({ open, areas, onClose, onCreated }) => {
+  const [step, setStep] = useState(1)
+  const [form, setForm] = useState(createLegacyForm)
+  const [clients, setClients] = useState([])
+  const [blocks, setBlocks] = useState([])
+  const [slots, setSlots] = useState([])
+  const [supportingDocument, setSupportingDocument] = useState(null)
+  const [loadingClients, setLoadingClients] = useState(false)
+  const [loadingBlocks, setLoadingBlocks] = useState(false)
+  const [loadingSlots, setLoadingSlots] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [modalAlert, setModalAlert] = useState({ type: "", message: "" })
+  const slotRequestRef = useRef(0)
+
+  const selectedClient = clients.find((client) => client.id === form.clientId)
+  const selectedArea = areas.find((area) => area.id === form.areaId)
+  const selectedBlock = blocks.find((block) => block.id === form.blockId)
+  const selectedBlockHasCapacity = blockHasContainerCapacity(selectedBlock, form.containerSize)
+
+  useEffect(() => {
+    if (!open) return
+    setStep(1)
+    setForm(createLegacyForm())
+    setBlocks([])
+    setSlots([])
+    setSupportingDocument(null)
+    setModalAlert({ type: "", message: "" })
+    setLoadingClients(true)
+    api.get("/admin/inventory/clients")
+      .then(({ data }) => setClients(data.clients || []))
+      .catch((error) => setModalAlert({ type: "error", message: getApiError(error) }))
+      .finally(() => setLoadingClients(false))
+  }, [open])
+
+  if (!open) return null
+
+  const setValue = (name, value) => {
+    setForm((current) => ({ ...current, [name]: value }))
+    setModalAlert({ type: "", message: "" })
+  }
+
+  const loadSlots = async (blockId) => {
+    setForm((current) => ({ ...current, blockId, bay: "", row: "", tier: "" }))
+    setSlots([])
+    const requestId = slotRequestRef.current + 1
+    slotRequestRef.current = requestId
+    if (!blockId) {
+      setLoadingSlots(false)
+      return
+    }
+    try {
+      setLoadingSlots(true)
+      const { data } = await api.get(`/admin/inventory/blocks/${blockId}/slots`)
+      if (slotRequestRef.current === requestId) setSlots(data.slots || [])
+    } catch (error) {
+      if (slotRequestRef.current === requestId) {
+        setModalAlert({ type: "error", message: getApiError(error) })
+      }
+    } finally {
+      if (slotRequestRef.current === requestId) setLoadingSlots(false)
+    }
+  }
+
+  const loadAreaSlots = async (areaId, containerSize = form.containerSize) => {
+    setForm((current) => ({ ...current, areaId, blockId: "", bay: "", row: "", tier: "" }))
+    setBlocks([])
+    setSlots([])
+    slotRequestRef.current += 1
+    setLoadingSlots(false)
+    setModalAlert({ type: "", message: "" })
+    if (!areaId) {
+      setLoadingBlocks(false)
+      return
+    }
+
+    try {
+      setLoadingBlocks(true)
+      const { data } = await api.get(`/admin/inventory/areas/${areaId}/blocks`)
+      const nextBlocks = (data.blocks || []).filter((block) => (block.status || "active") === "active")
+      setBlocks(nextBlocks)
+
+      const area = areas.find((item) => item.id === areaId)
+      const areaBlock = chooseAreaLocationBlock({ blocks: nextBlocks, area, containerSize })
+      if (!areaBlock) {
+        setModalAlert({
+          type: "error",
+          message: "No available slot can fit this container in the selected yard area. Choose another area.",
+        })
+        return
+      }
+
+      await loadSlots(areaBlock.id)
+    } catch (error) {
+      setModalAlert({ type: "error", message: getApiError(error) })
+    } finally {
+      setLoadingBlocks(false)
+    }
+  }
+
+  const toggleCondition = (condition) => {
+    setForm((current) => {
+      const exists = current.gateInConditions.includes(condition)
+      return {
+        ...current,
+        gateInConditions: exists
+          ? current.gateInConditions.filter((item) => item !== condition)
+          : [...current.gateInConditions, condition],
+      }
+    })
+  }
+
+  const validateStep = () => {
+    if (step === 1) {
+      const requiredValues = [
+        form.containerNumber,
+        form.containerSize,
+        form.containerType,
+        form.containerLoadStatus,
+        form.rateType,
+        form.scheduledDateIn,
+        form.scheduledTimeIn,
+        form.shippingLine,
+        form.areaId,
+        form.blockId,
+        form.bay,
+        form.row,
+        form.tier,
+      ]
+      if (requiredValues.some((value) => !String(value || "").trim())) {
+        setModalAlert({
+          type: "error",
+          message: "Complete the required details and select an available yard slot before continuing.",
+        })
+        return false
+      }
+    }
+    if (step === 2) {
+      if (form.gateInConditions.includes("OTHER") && !form.gateInConditionOther.trim()) {
+        setModalAlert({ type: "error", message: "Specify the Other container condition." })
+        return false
+      }
+    }
+    if (step === 3) {
+      if (Number(form.openingBalanceAmount) < 0 || Number(form.openingCreditAmount) < 0) {
+        setModalAlert({ type: "error", message: "Opening balance and credit cannot be negative." })
+        return false
+      }
+    }
+    setModalAlert({ type: "", message: "" })
+    return true
+  }
+
+  const nextStep = () => {
+    if (!validateStep()) return
+    setStep((current) => Math.min(current + 1, 4))
+  }
+
+  const submit = async () => {
+    try {
+      setSaving(true)
+      setModalAlert({ type: "", message: "" })
+      const payload = new FormData()
+      const scheduledDateTime = new Date(`${form.scheduledDateIn}T${form.scheduledTimeIn}:00`)
+      Object.entries(form).forEach(([key, value]) => {
+        payload.append(key, key === "gateInConditions" ? JSON.stringify(value) : value ?? "")
+      })
+      if (!Number.isNaN(scheduledDateTime.getTime())) payload.append("scheduledDateTimeIn", scheduledDateTime.toISOString())
+      if (supportingDocument) payload.append("supportingDocument", supportingDocument)
+      const { data } = await api.post("/admin/inventory/containers/legacy", payload)
+      onCreated(data)
+      onClose()
+    } catch (error) {
+      setModalAlert({ type: "error", message: getApiError(error) })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const stepTitles = ["Required Details", "Optional Details", "Billing", "Review"]
+
+  return (
+    <div className="fixed inset-0 z-[9999] grid place-items-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
+      <div className="max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-[1.75rem] bg-white shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white p-5">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-700">
+              <Database size={14} /> Existing Container Registration
+            </div>
+            <h2 className="mt-3 text-2xl font-black text-slate-950">Add Legacy Inventory Container</h2>
+            <p className="mt-1 text-sm font-semibold text-slate-500">Register a container that was already inside the yard before the system was implemented.</p>
+          </div>
+          <ModalCloseButton onClick={onClose} label="Close existing container form" />
+        </div>
+
+        <div className="p-5">
+          <div className="mb-5 grid gap-2 sm:grid-cols-4">
+            {stepTitles.map((title, index) => {
+              const number = index + 1
+              const active = step === number
+              const complete = step > number
+              return (
+                <div key={title} className={`rounded-2xl border px-3 py-3 ${active ? "border-emerald-300 bg-emerald-50" : complete ? "border-emerald-100 bg-white" : "border-slate-200 bg-slate-50"}`}>
+                  <div className="flex items-center gap-2">
+                    <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-black ${active || complete ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-600"}`}>{complete ? <CheckCircle2 size={15} /> : number}</span>
+                    <span className={`text-xs font-black uppercase tracking-wide ${active ? "text-emerald-800" : "text-slate-500"}`}>{title}</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          <Alert type={modalAlert.type}>{modalAlert.message}</Alert>
+
+          {step === 1 && (
+            <div className="mt-5 space-y-5">
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+                Fields marked with <strong>*</strong> are required. All client, transport, condition, document, and opening-balance details are optional.
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Client / Container Owner (Optional)">
+                  <select className="input" value={form.clientId} onChange={(event) => setValue("clientId", event.target.value)} disabled={loadingClients}>
+                    <option value="">{loadingClients ? "Loading clients..." : "Leave unassigned or select a verified client"}</option>
+                    {clients.map((client) => <option key={client.id} value={client.id}>{client.name} • {client.email}</option>)}
+                  </select>
+                </Field>
+                <Field label="Container Number *">
+                  <input className="input uppercase" value={form.containerNumber} onChange={(event) => setValue("containerNumber", event.target.value.toUpperCase())} placeholder="e.g., ABCD1234567" required />
+                </Field>
+                <Field label="Container Size *">
+                  <select
+                    className="input"
+                    value={form.containerSize}
+                    onChange={(event) => {
+                      const containerSize = event.target.value
+                      const areaId = form.areaId
+                      setForm((current) => ({ ...current, containerSize, blockId: "", bay: "", row: "", tier: "" }))
+                      setSlots([])
+                      slotRequestRef.current += 1
+                      setLoadingSlots(false)
+                      setModalAlert({ type: "", message: "" })
+                      if (areaId) loadAreaSlots(areaId, containerSize)
+                    }}
+                    required
+                  ><option value="20">20 FT</option><option value="40">40 FT</option></select>
+                </Field>
+                <Field label="Type *">
+                  <select className="input" value={form.containerType} onChange={(event) => setValue("containerType", event.target.value)} required>
+                    <option value="dry">Dry</option><option value="reefer">Reefer</option><option value="tank">Tank</option><option value="open_top">Open Top</option><option value="flat_rack">Flat Rack</option>
+                  </select>
+                </Field>
+                <Field label="Load Status *">
+                  <select className="input" value={form.containerLoadStatus} onChange={(event) => setValue("containerLoadStatus", event.target.value)} required><option value="empty">Empty</option><option value="laden">Laden</option></select>
+                </Field>
+                <Field label="Transaction Classification *">
+                  <select className="input" value={form.rateType} onChange={(event) => setValue("rateType", event.target.value)} required><option value="local">Local</option><option value="international">International</option></select>
+                </Field>
+                <Field label="Scheduled Date In *">
+                  <input className="input" type="date" max={new Date().toISOString().slice(0, 10)} value={form.scheduledDateIn} onChange={(event) => setValue("scheduledDateIn", event.target.value)} required />
+                </Field>
+                <Field label="Scheduled Time In *">
+                  <input className="input" type="time" value={form.scheduledTimeIn} onChange={(event) => setValue("scheduledTimeIn", event.target.value)} required />
+                </Field>
+                <Field label="Shipping Line *">
+                  <input className="input" value={form.shippingLine} onChange={(event) => setValue("shippingLine", event.target.value)} placeholder="Shipping line" required />
+                </Field>
+                <Field label="Yard Area *" hint="Choose the yard area and the system will show all available Bay, Row, and Tier positions.">
+                  <select className="input" value={form.areaId} onChange={(event) => loadAreaSlots(event.target.value)} required>
+                    <option value="">Select yard area</option>
+                    {areas.map((area) => <option key={area.id} value={area.id}>{area.name} • {area.availableSlots ?? 0} TEU available</option>)}
+                  </select>
+                </Field>
+              </div>
+              {selectedClient && <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">Selected owner: <strong>{selectedClient.name}</strong> • {selectedClient.email}</div>}
+              {selectedArea && <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-700">Selected yard area: <strong>{selectedArea.name}</strong>. Choose the exact available Bay, Row, and Tier below.</div>}
+              {form.areaId && loadingBlocks && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm font-bold text-slate-600">
+                  Loading available slots for this yard area...
+                </div>
+              )}
+              {form.areaId && !loadingBlocks && selectedBlock && (
+                <AvailableSlotPicker
+                  block={selectedBlock}
+                  unavailableSlots={slots}
+                  containerSize={form.containerSize}
+                  selectedBay={form.bay}
+                  selectedRow={form.row}
+                  selectedTier={form.tier}
+                  loading={loadingSlots}
+                  disabled={!selectedBlockHasCapacity}
+                  emptyMessage="No available slot can fit this container in the selected yard area. Choose another area."
+                  onSelect={(slot) => setForm((current) => ({ ...current, bay: slot.bay, row: slot.row, tier: slot.tier }))}
+                />
+              )}
+              {form.areaId && !loadingBlocks && !selectedBlock && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm font-bold text-red-700">
+                  No available slot can fit this container in the selected yard area. Choose another area.
+                </div>
+              )}
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="mt-5 space-y-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Original Reference Number (Optional)">
+                  <input className="input" value={form.historicalSourceReference} onChange={(event) => setValue("historicalSourceReference", event.target.value)} placeholder="Old pass, ledger, or invoice number" />
+                </Field>
+                <Field label="Supporting Document (Optional)">
+                  <label className="flex min-h-12 cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600 hover:border-emerald-400 hover:bg-emerald-50">
+                    <Upload size={18} /> {supportingDocument ? supportingDocument.name : "Upload old Gate-In pass or source document"}
+                    <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp" onChange={(event) => setSupportingDocument(event.target.files?.[0] || null)} />
+                  </label>
+                </Field>
+                <Field label="Seal Number (Optional)"><input className="input" value={form.sealNumber} onChange={(event) => setValue("sealNumber", event.target.value)} /></Field>
+                <Field label="Seal Intact (Optional)"><select className="input" value={form.sealIntact} onChange={(event) => setValue("sealIntact", event.target.value)}><option value="">Not recorded</option><option value="yes">Yes</option><option value="no">No</option></select></Field>
+                <Field label="Truck Plate Number (Optional)"><input className="input" value={form.truckPlateNumber} onChange={(event) => setValue("truckPlateNumber", event.target.value)} /></Field>
+                <Field label="Driver Name (Optional)"><input className="input" value={form.driverName} onChange={(event) => setValue("driverName", event.target.value)} /></Field>
+                <Field label="Driver License Number (Optional)"><input className="input" value={form.driverLicenseNumber} onChange={(event) => setValue("driverLicenseNumber", event.target.value)} /></Field>
+                <Field label="Hauler (Optional)"><input className="input" value={form.hauler} onChange={(event) => setValue("hauler", event.target.value)} /></Field>
+              </div>
+              <Field label="Container Condition on Entry (Optional)" hint="Multiple conditions may be selected.">
+                <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {legacyConditionOptions.map((condition) => (
+                    <label key={condition} className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                      <input type="checkbox" checked={form.gateInConditions.includes(condition)} onChange={() => toggleCondition(condition)} className="h-4 w-4 rounded text-emerald-600" /> {condition}
+                    </label>
+                  ))}
+                  {form.gateInConditions.includes("OTHER") && <input className="input sm:col-span-2 lg:col-span-3" value={form.gateInConditionOther} onChange={(event) => setValue("gateInConditionOther", event.target.value)} placeholder="Specify other condition" />}
+                </div>
+              </Field>
+              <Field label="Inspection / Damage Remarks (Optional)"><textarea className="input min-h-24" value={form.inspectionRemarks} onChange={(event) => setValue("inspectionRemarks", event.target.value)} /></Field>
+              <Field label="Registration Remarks (Optional)"><textarea className="input min-h-24" value={form.legacyRegistrationReason} onChange={(event) => setValue("legacyRegistrationReason", event.target.value)} /></Field>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="mt-5 space-y-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Billing Start Method (Optional)">
+                  <select className="input" value={form.billingStartMethod} onChange={(event) => setValue("billingStartMethod", event.target.value)}><option value="historical_gate_in">Start from Scheduled Date and Time In</option><option value="migration_date">Start from registration date — future storage only</option></select>
+                </Field>
+                <Field label="VAT Treatment (Optional)">
+                  <select className="input" value={form.isVatApplicable} onChange={(event) => setValue("isVatApplicable", event.target.value)}><option value="true">VAT applicable</option><option value="false">Non-VAT</option></select>
+                </Field>
+                <Field label="Opening Balance Before VAT (Optional)"><input className="input" type="number" min="0" step="0.01" value={form.openingBalanceAmount} onChange={(event) => setValue("openingBalanceAmount", event.target.value)} /></Field>
+                <Field label="Opening Credit / Previous Payment (Optional)"><input className="input" type="number" min="0" step="0.01" value={form.openingCreditAmount} onChange={(event) => setValue("openingCreditAmount", event.target.value)} /></Field>
+              </div>
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">The container will be registered in <strong>{selectedArea?.name || "the selected yard area"}</strong> at <strong>Bay {form.bay || "-"}, Row {form.row || "-"}, Tier {form.tier || "-"}</strong>.</div>
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">Billing from Scheduled Date and Time In may calculate historical storage charges. Registration-date billing calculates only future charges. Opening balances remain separately identified.</div>
+            </div>
+          )}
+
+          {step === 4 && (
+            <div className="mt-5 space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <Detail label="Client / Owner" value={selectedClient?.name || "Unassigned"} />
+                <Detail label="Container" value={`${form.containerNumber} • ${form.containerSize}FT • ${form.containerType.replaceAll("_", " ")}`} />
+                <Detail label="Classification" value={`${form.containerLoadStatus === "laden" ? "Laden" : "Empty"} • ${form.rateType === "international" ? "International" : "Local"}`} />
+                <Detail label="Scheduled Date / Time In" value={`${form.scheduledDateIn} • ${form.scheduledTimeIn}`} />
+                <Detail label="Shipping Line" value={form.shippingLine} />
+                <Detail label="Yard Location" value={`${selectedArea?.name || "-"} • B${form.bay || "-"}-R${form.row || "-"}-T${form.tier || "-"}`} />
+                <Detail label="Billing Start" value={form.billingStartMethod === "historical_gate_in" ? "Scheduled Date and Time In" : "Registration date"} />
+                <Detail label="VAT Treatment" value={form.isVatApplicable === "false" ? "Non-VAT" : "VAT applicable"} />
+                <Detail label="Opening Balance" value={`PHP ${Number(form.openingBalanceAmount || 0).toLocaleString()}`} />
+                <Detail label="Opening Credit" value={`PHP ${Number(form.openingCreditAmount || 0).toLocaleString()}`} />
+                <Detail label="Source Document" value={supportingDocument?.name || "None uploaded"} />
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700"><strong>Confirmation:</strong> This creates a stored legacy inventory record at the exact available yard slot selected above. Optional ownership, transport, condition, document, and opening-balance information is preserved when provided.</div>
+            </div>
+          )}
+
+          <div className="mt-7 flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
+            <button type="button" className="btn-secondary" onClick={() => step === 1 ? onClose() : setStep((current) => current - 1)} disabled={saving}><ChevronLeft size={16} /> {step === 1 ? "Cancel" : "Back"}</button>
+            {step < 4 ? <button type="button" className="btn-primary" onClick={nextStep}>Continue <ChevronRight size={16} /></button> : <button type="button" className="btn-primary" onClick={submit} disabled={saving}><Database size={16} /> {saving ? "Registering..." : "Register Existing Container"}</button>}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -183,7 +661,10 @@ const AdminInventory = () => {
   const [containers, setContainers] = useState([])
   const [summary, setSummary] = useState(null)
   const [selectedAreaId, setSelectedAreaId] = useState("")
-  const [selectedStatus, setSelectedStatus] = useState("all")
+  const [selectedStatus, setSelectedStatus] = useState(DEFAULT_INVENTORY_STATUS)
+  const [selectedLoadStatus, setSelectedLoadStatus] = useState("all")
+  const [selectedRateType, setSelectedRateType] = useState("all")
+  const [selectedRecordSource, setSelectedRecordSource] = useState("all")
   const [search, setSearch] = useState("")
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
@@ -191,17 +672,31 @@ const AdminInventory = () => {
   const [alert, setAlert] = useState({ type: "", message: "" })
 
   const [modalOpen, setModalOpen] = useState(false)
+  const [legacyModalOpen, setLegacyModalOpen] = useState(false)
+  const [selectedContainer, setSelectedContainer] = useState(null)
   const [editingContainer, setEditingContainer] = useState(null)
-  const [locationForm, setLocationForm] = useState({ areaId: "", blockId: "", bay: 1, row: 1, tier: 1 })
+  const [deletingId, setDeletingId] = useState("")
+  const [storingId, setStoringId] = useState("")
+  const [locationForm, setLocationForm] = useState({ areaId: "", blockId: "", bay: "", row: "", tier: "" })
   const [modalBlocks, setModalBlocks] = useState([])
   const [modalSlots, setModalSlots] = useState([])
   const [loadingBlocks, setLoadingBlocks] = useState(false)
+  const [modalSlotsLoading, setModalSlotsLoading] = useState(false)
   const [savingLocation, setSavingLocation] = useState(false)
+  const modalSlotRequestRef = useRef(0)
+  const user = useAuthStore((state) => state.user)
+  const canDeleteBooking = hasModulePermission(user, "operations", "delete")
+  const canCreateLegacyContainer = user?.role === "super_admin"
 
   const bookingContainers = useMemo(() => {
     return containers
       .filter((container) => container.source === "booking" && bookingStatusesForInventory.includes(container.bookingStatus))
-      .sort((a, b) => getInventoryEnteredTime(b) - getInventoryEnteredTime(a))
+      .sort((a, b) => {
+        const aWaiting = a.bookingStatus === "gate_in_approved" ? 0 : 1
+        const bWaiting = b.bookingStatus === "gate_in_approved" ? 0 : 1
+        if (aWaiting !== bWaiting) return aWaiting - bWaiting
+        return getInventoryEnteredTime(b) - getInventoryEnteredTime(a)
+      })
   }, [containers])
 
 
@@ -211,22 +706,27 @@ const AdminInventory = () => {
     return bookingContainers.filter((container) => {
       const matchesArea = !selectedAreaId || container.area === selectedAreaId
       const matchesStatus = selectedStatus === "all" || container.bookingStatus === selectedStatus
-      const matchesSearch = !term || [container.containerNumber, container.bookingReference, container.clientName, container.areaName, container.blockCode, container.blockName]
+      const normalizedLoadStatus = container.containerLoadStatus || container.containerStatus
+      const matchesLoadStatus = selectedLoadStatus === "all" || normalizedLoadStatus === selectedLoadStatus
+      const matchesRateType = selectedRateType === "all" || (container.rateType || "local") === selectedRateType
+      const matchesRecordSource = selectedRecordSource === "all" || (container.recordSource || "client_booking") === selectedRecordSource
+      const matchesSearch = !term || [container.containerNumber, container.bookingReference, container.legacyRegistrationNumber, container.clientName, container.areaName, container.slotNumber]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term))
-      return matchesArea && matchesStatus && matchesSearch
+      return matchesArea && matchesStatus && matchesLoadStatus && matchesRateType && matchesRecordSource && matchesSearch
     })
-  }, [bookingContainers, selectedAreaId, selectedStatus, search])
+  }, [bookingContainers, selectedAreaId, selectedLoadStatus, selectedRateType, selectedRecordSource, selectedStatus, search])
 
   const containerPagination = usePagination(
     filteredContainers,
     10,
-    `${selectedAreaId}|${selectedStatus}|${search}`,
+    `${selectedAreaId}|${selectedStatus}|${selectedLoadStatus}|${selectedRateType}|${selectedRecordSource}|${search}`,
   )
 
   const waitingForStorage = bookingContainers.filter((container) => container.bookingStatus === "gate_in_approved")
-  const storedContainers = bookingContainers.filter((container) => ["stored_in_assigned_area", "gate_out_requested", "gate_out_approved"].includes(container.bookingStatus))
+  const storedContainers = bookingContainers.filter((container) => ["stored_in_assigned_area", "gate_out_requested", "gate_out_approved", "gate_out_reversal_requested"].includes(container.bookingStatus))
   const assignedTeu = bookingContainers.reduce((sum, container) => sum + getTeu(container.containerSize), 0)
+  const assignedFeu = bookingContainers.reduce((sum, container) => sum + getFeu(container.containerSize), 0)
 
   const loadAreas = async () => {
     const { data } = await api.get("/admin/inventory/areas")
@@ -279,7 +779,7 @@ const AdminInventory = () => {
     setLoadingBlocks(true)
     try {
       const { data } = await api.get(`/admin/inventory/areas/${areaId}/blocks`)
-      const nextBlocks = data.blocks || []
+      const nextBlocks = (data.blocks || []).filter((block) => (block.status || "active") === "active")
       setModalBlocks(nextBlocks)
       return nextBlocks
     } catch (error) {
@@ -292,61 +792,104 @@ const AdminInventory = () => {
   }
 
   const loadBlockSlots = async (blockId) => {
+    setModalSlots([])
+    const requestId = modalSlotRequestRef.current + 1
+    modalSlotRequestRef.current = requestId
     if (!blockId) {
-      setModalSlots([])
+      setModalSlotsLoading(false)
       return
     }
 
     try {
+      setModalSlotsLoading(true)
       const { data } = await api.get(`/admin/inventory/blocks/${blockId}/slots`)
-      setModalSlots(data.slots || [])
+      if (modalSlotRequestRef.current === requestId) setModalSlots(data.slots || [])
     } catch (error) {
-      setModalSlots([])
-      setAlert({ type: "error", message: getApiError(error) })
+      if (modalSlotRequestRef.current === requestId) {
+        setModalSlots([])
+        setAlert({ type: "error", message: getApiError(error) })
+      }
+    } finally {
+      if (modalSlotRequestRef.current === requestId) setModalSlotsLoading(false)
     }
   }
 
   const openLocationModal = async (container) => {
+    const areaId = container.area || ""
     setEditingContainer(container)
     setModalOpen(true)
     setModalSlots([])
     setLocationForm({
-      areaId: container.area || "",
-      blockId: container.block || "",
-      bay: container.bay || 1,
-      row: container.row || 1,
-      tier: container.tier || 1,
+      areaId,
+      blockId: "",
+      bay: "",
+      row: "",
+      tier: "",
     })
 
-    const nextBlocks = await loadBlocksForArea(container.area || "")
-    if (container.block && nextBlocks.some((block) => block.id === container.block)) {
-      await loadBlockSlots(container.block)
-    }
+    const nextBlocks = await loadBlocksForArea(areaId)
+    const area = areas.find((item) => item.id === areaId)
+    const areaBlock = chooseAreaLocationBlock({
+      blocks: nextBlocks,
+      area,
+      container,
+      preferredBlockId: container.block || "",
+    })
+
+    if (!areaBlock) return
+
+    const isCurrentLocation = String(areaBlock.id) === String(container.block || "")
+    setLocationForm({
+      areaId,
+      blockId: areaBlock.id,
+      bay: isCurrentLocation ? container.bay || "" : "",
+      row: isCurrentLocation ? container.row || "" : "",
+      tier: isCurrentLocation ? container.tier || "" : "",
+    })
+    await loadBlockSlots(areaBlock.id)
   }
 
   const closeLocationModal = () => {
     setModalOpen(false)
     setEditingContainer(null)
+    modalSlotRequestRef.current += 1
+    setModalSlotsLoading(false)
     setModalBlocks([])
     setModalSlots([])
-    setLocationForm({ areaId: "", blockId: "", bay: 1, row: 1, tier: 1 })
+    setLocationForm({ areaId: "", blockId: "", bay: "", row: "", tier: "" })
   }
 
   const handleModalAreaChange = async (areaId) => {
-    setLocationForm((current) => ({ ...current, areaId, blockId: "", bay: 1, row: 1, tier: 1 }))
+    setLocationForm((current) => ({ ...current, areaId, blockId: "", bay: "", row: "", tier: "" }))
+    modalSlotRequestRef.current += 1
+    setModalSlotsLoading(false)
     setModalSlots([])
-    await loadBlocksForArea(areaId)
-  }
 
-  const handleModalBlockChange = async (blockId) => {
-    const block = modalBlocks.find((item) => item.id === blockId)
-    setLocationForm((current) => ({ ...current, blockId, bay: 1, row: 1, tier: 1 }))
-    if (block) await loadBlockSlots(blockId)
+    if (!areaId || !editingContainer) {
+      setModalBlocks([])
+      return
+    }
+
+    const nextBlocks = await loadBlocksForArea(areaId)
+    const area = areas.find((item) => item.id === areaId)
+    const areaBlock = chooseAreaLocationBlock({ blocks: nextBlocks, area, container: editingContainer })
+
+    if (!areaBlock) {
+      setAlert({ type: "error", message: "No available slot can fit this container in the selected yard area. Choose another area." })
+      return
+    }
+
+    setLocationForm((current) => ({ ...current, areaId, blockId: areaBlock.id, bay: "", row: "", tier: "" }))
+    await loadBlockSlots(areaBlock.id)
   }
 
   const handleLocationSubmit = async (event) => {
     event.preventDefault()
     if (!editingContainer) return
+    if (!locationForm.areaId || !locationForm.blockId || !locationForm.bay || !locationForm.row || !locationForm.tier) {
+      setAlert({ type: "error", message: "Select an available yard slot before saving the new location." })
+      return
+    }
 
     try {
       setSavingLocation(true)
@@ -372,12 +915,41 @@ const AdminInventory = () => {
     if (container.bookingStatus !== "gate_in_approved") return
 
     try {
+      setStoringId(container.id)
       setAlert({ type: "", message: "" })
       await api.patch(`/admin/bookings/${container.id}/store`)
-      setAlert({ type: "success", message: "Container marked as stored. Billing was computed and it is now visible in Storage Monitoring." })
+      setSelectedContainer(null)
+      setAlert({ type: "success", message: "Container storage approved. Billing was computed and the record is now visible in Storage Monitoring." })
       await loadAll()
     } catch (error) {
       setAlert({ type: "error", message: getApiError(error) })
+    } finally {
+      setStoringId("")
+    }
+  }
+
+  const handleLegacyContainerCreated = async (data) => {
+    setAlert({ type: "success", message: data.message || "Existing container registered successfully." })
+    setSelectedStatus("stored_in_assigned_area")
+    setSelectedRecordSource("legacy_migration")
+    await loadAll()
+  }
+
+  const deleteContainerRecord = async (container) => {
+    if (!canDeleteBooking) return
+    if (!window.confirm(`Delete booking ${container.bookingReference}? This permanently removes the container booking and its uploaded documents.`)) return
+
+    try {
+      setDeletingId(container.id)
+      setAlert({ type: "", message: "" })
+      const { data } = await api.delete(`/admin/bookings/${container.id}`)
+      if (selectedContainer?.id === container.id) setSelectedContainer(null)
+      setAlert({ type: "success", message: data.message || "Container booking deleted successfully." })
+      await loadAll()
+    } catch (error) {
+      setAlert({ type: "error", message: getApiError(error) })
+    } finally {
+      setDeletingId("")
     }
   }
 
@@ -389,19 +961,27 @@ const AdminInventory = () => {
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">Inventory Module</div>
             <h1 className="mt-1 text-2xl font-black text-slate-950">Gate-In Container Inventory</h1>
             <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-500">
-              Containers appear here immediately after Gate-In approval. The most recently accepted Gate-In record is shown first.
+              Containers appear here after Gate-In approval. Authorized admins can also register existing containers that were already stored before the system was implemented. Waiting-for-storage records remain prioritized first.
             </p>
           </div>
-          <button type="button" onClick={loadAll} className="btn-secondary shrink-0" disabled={loading}>
-            <RefreshCw size={16} /> Refresh
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {canCreateLegacyContainer && (
+              <button type="button" onClick={() => setLegacyModalOpen(true)} className="btn-primary shrink-0" title="Register an existing container">
+                <Plus size={16} /> Add Existing Container
+              </button>
+            )}
+            <button type="button" onClick={loadAll} className="btn-secondary shrink-0" disabled={loading}>
+              <RefreshCw size={16} /> Refresh
+            </button>
+          </div>
         </div>
 
-        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Area Capacity" value={`${summary?.totalAreaCapacityTeu || 0} TEU`} icon={Warehouse} />
-          <StatCard label="Inventory Containers" value={bookingContainers.length} icon={MapPin} />
+          <StatCard label="Total Containers" value={bookingContainers.length} icon={MapPin} />
           <StatCard label="Waiting Storage" value={waitingForStorage.length} icon={PackageCheck} />
           <StatCard label="Inventory TEU" value={Math.round(assignedTeu * 100) / 100} icon={CalendarClock} />
+          <StatCard label="Inventory FEU" value={Math.round(assignedFeu * 100) / 100} icon={Database} />
         </div>
 
         <div className="mt-4">
@@ -437,7 +1017,7 @@ const AdminInventory = () => {
               >
                 <SlidersHorizontal size={18} /> Filter
                 <span className="rounded-full bg-slate-950 px-2 py-0.5 text-xs text-white">
-                  {(selectedAreaId ? 1 : 0) + (selectedStatus !== "all" ? 1 : 0)}
+                  {(selectedAreaId ? 1 : 0) + (selectedStatus !== "all" ? 1 : 0) + (selectedLoadStatus !== "all" ? 1 : 0) + (selectedRateType !== "all" ? 1 : 0) + (selectedRecordSource !== "all" ? 1 : 0)}
                 </span>
               </button>
 
@@ -450,7 +1030,10 @@ const AdminInventory = () => {
                       className="text-xs font-black text-emerald-700"
                       onClick={() => {
                         setSelectedAreaId("")
-                        setSelectedStatus("all")
+                        setSelectedStatus(DEFAULT_INVENTORY_STATUS)
+                        setSelectedLoadStatus("all")
+                        setSelectedRateType("all")
+                        setSelectedRecordSource("all")
                       }}
                     >
                       Reset
@@ -470,6 +1053,20 @@ const AdminInventory = () => {
                         {bookingStatusesForInventory.map((status) => <option key={status} value={status}>{statusLabel[status]}</option>)}
                       </select>
                     </Field>
+                    <Field label="Record Source">
+                      <select className="input" value={selectedRecordSource} onChange={(event) => setSelectedRecordSource(event.target.value)}>
+                        <option value="all">All record sources</option>
+                        <option value="client_booking">Client booking</option>
+                        <option value="legacy_migration">Legacy migration</option>
+                        <option value="admin_manual">Admin manual</option>
+                      </select>
+                    </Field>
+                    <ContainerClassificationFilters
+                      loadStatus={selectedLoadStatus}
+                      rateType={selectedRateType}
+                      onLoadStatusChange={setSelectedLoadStatus}
+                      onRateTypeChange={setSelectedRateType}
+                    />
                   </div>
                 </div>
               )}
@@ -478,7 +1075,7 @@ const AdminInventory = () => {
         </div>
 
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">
-          Showing {filteredContainers.length} of {bookingContainers.length} Gate-In accepted containers • newest first
+          Showing {filteredContainers.length} of {bookingContainers.length} Gate-In accepted containers • waiting for storage first
         </div>
 
         <div className="overflow-x-auto">
@@ -491,7 +1088,7 @@ const AdminInventory = () => {
                 <th className="px-5 py-3">Size / Type</th>
                 <th className="px-5 py-3">Status</th>
                 <th className="px-5 py-3">Billing</th>
-                <th className="px-5 py-3 text-right">Action</th>
+                <th className="px-5 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -501,7 +1098,6 @@ const AdminInventory = () => {
                 </tr>
               )}
               {containerPagination.paginatedItems.map((container) => {
-                const canMarkStored = container.bookingStatus === "gate_in_approved"
                 const canRelocate = ["approved_area_assigned", "gate_in_approved", "stored_in_assigned_area"].includes(container.bookingStatus)
 
                 return (
@@ -509,30 +1105,47 @@ const AdminInventory = () => {
                     <td className="px-5 py-4">
                       <div className="font-black text-slate-950">{container.containerNumber}</div>
                       <div className="text-xs font-semibold text-slate-500">{container.bookingReference}</div>
+                      {container.recordSource === "legacy_migration" && <span className="mt-2 inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">Legacy Record</span>}
                       <div className="mt-1 text-xs font-bold text-emerald-700">Gate-In accepted: {formatDate(container.inventoryEnteredAt || container.gateInApprovedAt || container.storedAt)}</div>
                     </td>
                     <td className="px-5 py-4 font-semibold text-slate-600">{container.clientName || "-"}</td>
                     <td className="px-5 py-4 font-semibold text-slate-600">
                       <div>{container.areaName || "No area"}</div>
-                      <div className="text-xs text-slate-500">{container.blockCode || container.blockName || "No block"}</div>
-                      <div className="mt-1 rounded-xl bg-slate-50 px-3 py-2 text-xs font-black text-slate-500">{container.slotNumber || "No slot"}</div>
+                      <div className="mt-1 rounded-xl bg-slate-50 px-3 py-2 text-xs font-black text-slate-500">{getAreaSlotLabel(container)}</div>
                     </td>
-                    <td className="px-5 py-4 font-semibold text-slate-600">{container.containerSize}ft • {container.containerType?.replace("_", " ")}</td>
-                    <td className="px-5 py-4"><span className={`rounded-full px-3 py-1 text-xs font-black ${statusClass(container.bookingStatus)}`}>{statusLabel[container.bookingStatus] || container.bookingStatus}</span></td>
+                    <td className="px-5 py-4 font-semibold text-slate-600">
+                      <div>{container.containerSize}ft • {container.containerType?.replace("_", " ")}</div>
+                      <ContainerClassificationBadges loadStatus={container.containerLoadStatus || container.containerStatus} rateType={container.rateType} className="mt-2" compact />
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${statusClass(container.bookingStatus)}`}>{statusLabel[container.bookingStatus] || container.bookingStatus}</span>
+                      {container.isOverstaying && <span className="mt-2 inline-flex rounded-full bg-red-100 px-3 py-1 text-xs font-black text-red-700">Overstaying</span>}
+                    </td>
                     <td className="px-5 py-4"><span className={`rounded-full px-3 py-1 text-xs font-black ${billingClass(container.billingStatus)}`}>{billingLabel[container.billingStatus] || container.billingStatus}</span></td>
                     <td className="px-5 py-4">
-                      <div className="flex flex-col items-stretch gap-2 sm:items-end">
-                        {canMarkStored && (
-                          <button type="button" onClick={() => handleMarkStored(container)} className="btn-primary whitespace-nowrap">
-                            <PackageCheck size={16} /> Mark Stored
-                          </button>
-                        )}
-                        {canRelocate && (
-                          <button type="button" onClick={() => openLocationModal(container)} className="btn-secondary whitespace-nowrap">
-                            <Edit3 size={16} /> Edit Location
-                          </button>
-                        )}
-                      </div>
+                      <TableCrudActions
+                        recordLabel={container.containerNumber}
+                        onView={() => setSelectedContainer(container)}
+                        onEdit={() => openLocationModal(container)}
+                        onDelete={() => deleteContainerRecord(container)}
+                        editDisabled={!canRelocate}
+                        editLabel={canRelocate ? `Edit location for ${container.containerNumber}` : `Location editing is unavailable for ${container.containerNumber} in its current status`}
+                        deleteDisabled={!canDeleteBooking}
+                        deleteLabel={canDeleteBooking ? `Delete ${container.containerNumber}` : "You do not have permission to delete container bookings"}
+                        deleting={deletingId === container.id}
+                      >
+                        <TableActionButton
+                          label={container.bookingStatus === "gate_in_approved"
+                            ? `Mark ${container.containerNumber} as stored`
+                            : `${container.containerNumber} is already stored or no longer eligible`}
+                          variant="success"
+                          disabled={container.bookingStatus !== "gate_in_approved"}
+                          loading={storingId === container.id}
+                          onClick={() => handleMarkStored(container)}
+                        >
+                          <PackageCheck size={17} aria-hidden="true" />
+                        </TableActionButton>
+                      </TableCrudActions>
                     </td>
                   </tr>
                 )
@@ -543,6 +1156,98 @@ const AdminInventory = () => {
         <Pagination {...containerPagination} />
       </div>
 
+
+      {selectedContainer && (
+        <div className="fixed inset-0 z-[9997] grid place-items-center bg-slate-950/[0.55] p-4 backdrop-blur-sm">
+          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[1.5rem] bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
+              <div>
+                <div className="text-xs font-black uppercase tracking-wide text-emerald-700">Inventory Details</div>
+                <div className="mt-2">
+                  <h2 className="text-2xl font-black text-slate-950">{selectedContainer.containerNumber}</h2>
+                  <ContainerClassificationBadges
+                    loadStatus={selectedContainer.containerLoadStatus || selectedContainer.containerStatus}
+                    rateType={selectedContainer.rateType}
+                    className="mt-3"
+                  />
+                </div>
+                <p className="mt-1 text-sm font-semibold text-slate-500">{selectedContainer.bookingReference} • {selectedContainer.clientName || "Client"}</p>
+                {selectedContainer.recordSource === "legacy_migration" && <span className="mt-3 inline-flex rounded-full bg-violet-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-violet-700">Legacy / Migrated Record</span>}
+              </div>
+              <ModalCloseButton onClick={() => setSelectedContainer(null)} label="Close inventory details" />
+            </div>
+            <div className="space-y-5 p-5">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <Detail label="Booking Status" value={statusLabel[selectedContainer.bookingStatus] || selectedContainer.bookingStatus} />
+                <Detail label="Billing Status" value={billingLabel[selectedContainer.billingStatus] || selectedContainer.billingStatus} />
+                <Detail label="Container" value={`${selectedContainer.containerSize}ft • ${String(selectedContainer.containerType || "").replaceAll("_", " ")}`} />
+                <Detail label="Load Status" value={(selectedContainer.containerLoadStatus || selectedContainer.containerStatus) === "laden" ? "Laden" : (selectedContainer.containerLoadStatus || selectedContainer.containerStatus) === "empty" ? "Empty" : "Unknown"} />
+                <Detail label="Rate Classification" value={selectedContainer.rateType === "international" ? "International" : "Local"} />
+                <Detail label="Yard Area" value={selectedContainer.areaName} />
+                <Detail label="Slot" value={getAreaSlotLabel(selectedContainer)} />
+                <Detail label="Gate-In Accepted" value={formatDate(selectedContainer.inventoryEnteredAt || selectedContainer.gateInApprovedAt)} />
+                <Detail label="Stored At" value={formatDate(selectedContainer.storedAt)} />
+                <Detail label="Date / Time Out" value={formatDate(selectedContainer.outDate)} />
+                <Detail label="Gate-Out Schedule" value={selectedContainer.isOverstaying ? "Overstaying" : selectedContainer.gateOutScheduleStatus} />
+                <Detail label="Overstay Started" value={formatDate(selectedContainer.gateOutOverstayStartedAt)} />
+                {selectedContainer.recordSource === "legacy_migration" && <>
+                  <Detail label="Legacy Registration No." value={selectedContainer.legacyRegistrationNumber} />
+                  <Detail label="Registered By" value={selectedContainer.legacyRegisteredByName} />
+                  <Detail label="Registered At" value={formatDate(selectedContainer.legacyRegisteredAt)} />
+                  <Detail label="Registration Reason" value={selectedContainer.legacyRegistrationReason} />
+                  <Detail label="Historical Date Quality" value={selectedContainer.historicalGateInDateType} />
+                  <Detail label="Original Reference" value={selectedContainer.historicalSourceReference} />
+                  <Detail label="Billing Start Method" value={selectedContainer.billingStartMethod === "historical_gate_in" ? "Historical Gate-In date" : "Migration date"} />
+                  <Detail label="Opening Balance" value={`PHP ${Number(selectedContainer.openingBalanceAmount || 0).toLocaleString()}`} />
+                  <Detail label="Opening Credit" value={`PHP ${Number(selectedContainer.openingCreditAmount || 0).toLocaleString()}`} />
+                </>}
+              </div>
+
+              {selectedContainer.documents?.length > 0 && (
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <div className="text-xs font-black uppercase tracking-wide text-slate-500">Supporting Documents</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {selectedContainer.documents.map((document, index) => (
+                      <a key={`${document.publicId || document.url}-${index}`} href={resolveFileUrl(document.secureUrl || document.url)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-50">
+                        <Upload size={14} /> {document.label || document.fileName || `Document ${index + 1}`}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <WorkflowDecisionPanel
+                icon={PackageCheck}
+                eyebrow="Inventory Review"
+                title="Storage Decision"
+                description="Confirm that the Gate-In accepted container is physically in its assigned slot before approving storage."
+                approveLabel="Approve Storage / Mark Stored"
+                approveIcon={PackageCheck}
+                onApprove={() => handleMarkStored(selectedContainer)}
+                approveDisabled={storingId === selectedContainer.id || selectedContainer.bookingStatus !== "gate_in_approved"}
+                note={selectedContainer.bookingStatus === "gate_in_approved"
+                  ? "Approving storage computes the billing start and moves this container into Storage Monitoring."
+                  : "This storage action is already completed or is unavailable for the current status."}
+              >
+                <div className="grid gap-3 rounded-3xl bg-slate-50 p-4 text-sm sm:grid-cols-2">
+                  <div><span className="font-black text-slate-500">Assigned Area:</span> {selectedContainer.areaName || "-"}</div>
+                  <div><span className="font-black text-slate-500">Assigned Slot:</span> {getAreaSlotLabel(selectedContainer)}</div>
+                  <div><span className="font-black text-slate-500">Gate-In Accepted:</span> {formatDate(selectedContainer.inventoryEnteredAt || selectedContainer.gateInApprovedAt)}</div>
+                  <div><span className="font-black text-slate-500">Storage Status:</span> {selectedContainer.bookingStatus === "gate_in_approved" ? "Waiting for approval" : "Completed"}</div>
+                </div>
+              </WorkflowDecisionPanel>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <LegacyContainerModal
+        open={legacyModalOpen}
+        areas={areas}
+        onClose={() => setLegacyModalOpen(false)}
+        onCreated={handleLegacyContainerCreated}
+      />
+
       <LocationModal
         open={modalOpen}
         container={editingContainer}
@@ -550,10 +1255,10 @@ const AdminInventory = () => {
         blocks={modalBlocks}
         slots={modalSlots}
         loadingBlocks={loadingBlocks}
+        loadingSlots={modalSlotsLoading}
         saving={savingLocation}
         onClose={closeLocationModal}
         onAreaChange={handleModalAreaChange}
-        onBlockChange={handleModalBlockChange}
         onSubmit={handleLocationSubmit}
         form={locationForm}
         setForm={setLocationForm}
@@ -561,5 +1266,12 @@ const AdminInventory = () => {
     </div>
   )
 }
+
+const Detail = ({ label, value }) => (
+  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+    <div className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</div>
+    <div className="mt-1 break-words text-sm font-bold text-slate-800">{value || "N/A"}</div>
+  </div>
+)
 
 export default AdminInventory

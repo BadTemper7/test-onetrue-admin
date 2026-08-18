@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Boxes, CalendarClock, Layers3, RefreshCw, Rotate3D, Search, SlidersHorizontal, Warehouse } from "lucide-react"
 import Alert from "../../components/Alert"
+import ModalCloseButton from "../../components/ui/ModalCloseButton"
 import { api, getApiError } from "../../lib/api"
 import Pagination from "../../components/ui/Pagination"
+import TableCrudActions from "../../components/ui/TableCrudActions"
+import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
+import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
 import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
 
 const MAP_WIDTH = 980
 const MAP_HEIGHT = 600
 
-const storedBookingStatuses = ["stored_in_assigned_area", "gate_out_requested", "gate_out_approved"]
+const storedBookingStatuses = ["stored_in_assigned_area", "gate_out_requested", "gate_out_approved", "gate_out_reversal_requested"]
 const storedInventoryStatuses = ["in_yard", "for_billing", "pending_payment", "payment_verified", "cleared_for_gate_out", "hold"]
 
 const statusLabels = {
@@ -19,12 +23,13 @@ const statusLabels = {
   stored_in_assigned_area: "Stored in Assigned Area",
   gate_out_requested: "Gate-Out Requested",
   gate_out_approved: "Gate-Out Approved",
+  gate_out_reversal_requested: "Gate-Out Reversal Requested",
   completed_gate_out_done: "Completed / Gate-Out Done",
 }
 
 const statusClass = (status) => {
   if (["in_yard", "stored_in_assigned_area"].includes(status)) return "bg-blue-50 text-blue-700"
-  if (["gate_out_requested", "gate_out_approved"].includes(status)) return "bg-blue-50 text-blue-700"
+  if (["gate_out_requested", "gate_out_approved", "gate_out_reversal_requested"].includes(status)) return "bg-blue-50 text-blue-700"
   if (status === "hold") return "bg-red-50 text-red-700"
   return "bg-slate-100 text-slate-700"
 }
@@ -589,6 +594,7 @@ const BlockSlotMap = ({ selectedArea, block, containers }) => {
             <div>
               <div className="text-xs font-black uppercase tracking-wide text-slate-500">Container ID</div>
               <div className="mt-1 font-black text-slate-950">{selectedContainer.containerNumber}</div>
+              <ContainerClassificationBadges loadStatus={selectedContainer.containerLoadStatus || selectedContainer.containerStatus} rateType={selectedContainer.rateType} className="mt-2" compact />
             </div>
             <div>
               <div className="text-xs font-black uppercase tracking-wide text-slate-500">Status</div>
@@ -669,10 +675,13 @@ const Storage3DViewer = ({ selectedArea, selectedBlockId, blocks, containers }) 
 
 const AdminStorageMonitoring = () => {
   const [areas, setAreas] = useState([])
+  const [selectedStorageContainer, setSelectedStorageContainer] = useState(null)
   const [blocks, setBlocks] = useState([])
   const [containers, setContainers] = useState([])
   const [selectedAreaId, setSelectedAreaId] = useState("")
   const [selectedBlockId, setSelectedBlockId] = useState("")
+  const [selectedLoadStatus, setSelectedLoadStatus] = useState("all")
+  const [selectedRateType, setSelectedRateType] = useState("all")
   const [search, setSearch] = useState("")
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
@@ -688,12 +697,15 @@ const AdminStorageMonitoring = () => {
     return containers.filter((container) => {
       const storedByBooking = storedBookingStatuses.includes(container.bookingStatus)
       const storedByInventory = storedInventoryStatuses.includes(container.status)
+      const normalizedLoadStatus = container.containerLoadStatus || container.containerStatus
+      const matchesLoadStatus = selectedLoadStatus === "all" || normalizedLoadStatus === selectedLoadStatus
+      const matchesRateType = selectedRateType === "all" || (container.rateType || "local") === selectedRateType
       const matchesSearch = !term || [container.containerNumber, container.bookingReference, container.clientName, container.areaName, container.blockCode, container.blockName]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term))
-      return (storedByBooking || storedByInventory) && matchesSearch
+      return (storedByBooking || storedByInventory) && matchesLoadStatus && matchesRateType && matchesSearch
     })
-  }, [containers, search])
+  }, [containers, search, selectedLoadStatus, selectedRateType])
 
   const selectedAreaContainers = useMemo(() => {
     return selectedAreaId ? storedContainers.filter((container) => container.area === selectedAreaId) : storedContainers
@@ -706,7 +718,7 @@ const AdminStorageMonitoring = () => {
   const storagePagination = usePagination(
     selectedBlockContainers,
     10,
-    `${selectedAreaId}|${selectedBlockId}|${search}`,
+    `${selectedAreaId}|${selectedBlockId}|${selectedLoadStatus}|${selectedRateType}|${search}`,
   )
 
   const usedCapacity = useMemo(() => {
@@ -828,7 +840,7 @@ const AdminStorageMonitoring = () => {
                 <div className="absolute right-0 z-40 mt-2 w-[310px] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <p className="text-sm font-black text-slate-950">Filter Storage</p>
-                    <button type="button" onClick={() => { setSelectedAreaId(""); setSelectedBlockId("") }} className="text-xs font-black text-emerald-700">Reset</button>
+                    <button type="button" onClick={() => { setSelectedAreaId(""); setSelectedBlockId(""); setSelectedLoadStatus("all"); setSelectedRateType("all") }} className="text-xs font-black text-emerald-700">Reset</button>
                   </div>
                   <div className="mt-4 space-y-4">
                     <label className="block">
@@ -845,6 +857,12 @@ const AdminStorageMonitoring = () => {
                         {blocks.map((block) => <option key={block.id} value={block.id}>{block.code || block.name}</option>)}
                       </select>
                     </label>
+                    <ContainerClassificationFilters
+                      loadStatus={selectedLoadStatus}
+                      rateType={selectedRateType}
+                      onLoadStatusChange={setSelectedLoadStatus}
+                      onRateTypeChange={setSelectedRateType}
+                    />
                   </div>
                 </div>
               )}
@@ -855,22 +873,38 @@ const AdminStorageMonitoring = () => {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1050px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-              <tr><th className="px-5 py-3">Container</th><th className="px-5 py-3">Customer</th><th className="px-5 py-3">Area / Block / Slot</th><th className="px-5 py-3">Size / Type</th><th className="px-5 py-3">Storage Start</th><th className="px-5 py-3">Days</th><th className="px-5 py-3">Status</th></tr>
+              <tr><th className="px-5 py-3">Container</th><th className="px-5 py-3">Customer</th><th className="px-5 py-3">Area / Block / Slot</th><th className="px-5 py-3">Size / Type</th><th className="px-5 py-3">Storage Start</th><th className="px-5 py-3">Days</th><th className="px-5 py-3">Status</th><th className="px-5 py-3 text-right">Actions</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {selectedBlockContainers.length === 0 && !loading && <tr><td colSpan="7" className="px-5 py-12 text-center font-semibold text-slate-500">No stored containers found for the selected view.</td></tr>}
+              {selectedBlockContainers.length === 0 && !loading && <tr><td colSpan="8" className="px-5 py-12 text-center font-semibold text-slate-500">No stored containers found for the selected view.</td></tr>}
               {storagePagination.paginatedItems.map((container) => {
                 const displayStatus = container.bookingStatus || container.status
                 const storageDate = container.storageStartDate || container.storedAt || container.updatedAt
                 return (
                   <tr key={container.id} className="align-top transition hover:bg-slate-50/80">
-                    <td className="px-5 py-4"><div className="font-black text-slate-950">{container.containerNumber}</div><div className="text-xs font-semibold text-slate-500">{container.bookingReference || container.preAdviceNumber || "-"}</div></td>
+                    <td className="px-5 py-4"><div className="font-black text-slate-950">{container.containerNumber}</div><div className="text-xs font-semibold text-slate-500">{container.bookingReference || container.preAdviceNumber || "-"}</div>{container.recordSource === "legacy_migration" && <span className="mt-2 inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">Legacy Record</span>}</td>
                     <td className="px-5 py-4 font-semibold text-slate-600">{container.clientName || "-"}</td>
                     <td className="px-5 py-4 font-semibold text-slate-600"><div>{container.areaName || "No area"}</div><div className="text-xs text-slate-500">{container.blockCode || container.blockName || "No block"} • {container.slotNumber || "No slot"}</div></td>
-                    <td className="px-5 py-4 font-semibold text-slate-600">{container.containerSize}ft • {container.containerType?.replace("_", " ")}</td>
+                    <td className="px-5 py-4 font-semibold text-slate-600">
+                      <div>{container.containerSize}ft • {container.containerType?.replace("_", " ")}</div>
+                      <ContainerClassificationBadges loadStatus={container.containerLoadStatus || container.containerStatus} rateType={container.rateType} className="mt-2" compact />
+                    </td>
                     <td className="px-5 py-4 font-semibold text-slate-600"><CalendarClock className="mr-1 inline" size={14} /> {formatDate(storageDate)}</td>
                     <td className="px-5 py-4 font-black text-slate-950">{daysInYard(storageDate)}</td>
-                    <td className="px-5 py-4"><span className={`rounded-full px-3 py-1 text-xs font-black ${statusClass(displayStatus)}`}>{statusLabels[displayStatus] || displayStatus?.replaceAll("_", " ")}</span></td>
+                    <td className="px-5 py-4">
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${statusClass(displayStatus)}`}>{statusLabels[displayStatus] || displayStatus?.replaceAll("_", " ")}</span>
+                      {container.isOverstaying && <span className="mt-2 inline-flex rounded-full bg-red-100 px-3 py-1 text-xs font-black text-red-700">Overstaying</span>}
+                    </td>
+                    <td className="px-5 py-4 text-right">
+                      <TableCrudActions
+                        recordLabel={container.containerNumber}
+                        onView={() => setSelectedStorageContainer(container)}
+                        editDisabled
+                        deleteDisabled
+                        editLabel="Stored container locations are edited from the Inventory module"
+                        deleteLabel="Stored container records cannot be deleted from monitoring"
+                      />
+                    </td>
                   </tr>
                 )
               })}
@@ -879,6 +913,41 @@ const AdminStorageMonitoring = () => {
         </div>
         <Pagination {...storagePagination} />
       </section>
+
+
+      {selectedStorageContainer && (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-6">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Storage Details</p>
+                <h2 className="mt-1 text-2xl font-black text-slate-950">{selectedStorageContainer.containerNumber}</h2>
+                <p className="mt-1 text-sm font-semibold text-slate-500">{selectedStorageContainer.bookingReference || selectedStorageContainer.preAdviceNumber || "No booking reference"}</p>
+                <ContainerClassificationBadges loadStatus={selectedStorageContainer.containerLoadStatus || selectedStorageContainer.containerStatus} rateType={selectedStorageContainer.rateType} className="mt-3" />
+                {selectedStorageContainer.recordSource === "legacy_migration" && <span className="mt-3 inline-flex rounded-full bg-violet-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-violet-700">Legacy / Migrated Record</span>}
+              </div>
+              <ModalCloseButton onClick={() => setSelectedStorageContainer(null)} label="Close storage details" />
+            </div>
+            <div className="grid gap-4 p-6 sm:grid-cols-2 lg:grid-cols-3">
+              <StorageDetail label="Customer" value={selectedStorageContainer.clientName} />
+              <StorageDetail label="Status" value={statusLabels[selectedStorageContainer.bookingStatus || selectedStorageContainer.status] || selectedStorageContainer.bookingStatus || selectedStorageContainer.status} />
+              <StorageDetail label="Container" value={`${selectedStorageContainer.containerSize}ft • ${String(selectedStorageContainer.containerType || "").replaceAll("_", " ")}`} />
+              <StorageDetail label="Load Status" value={(selectedStorageContainer.containerLoadStatus || selectedStorageContainer.containerStatus) === "laden" ? "Laden" : (selectedStorageContainer.containerLoadStatus || selectedStorageContainer.containerStatus) === "empty" ? "Empty" : "Unknown"} />
+              <StorageDetail label="Rate Classification" value={selectedStorageContainer.rateType === "international" ? "International" : "Local"} />
+              <StorageDetail label="Record Source" value={selectedStorageContainer.recordSource === "legacy_migration" ? "Legacy Migration" : "Client Booking"} />
+              <StorageDetail label="Yard Area" value={selectedStorageContainer.areaName} />
+              <StorageDetail label="Block" value={selectedStorageContainer.blockCode || selectedStorageContainer.blockName} />
+              <StorageDetail label="Slot" value={selectedStorageContainer.slotNumber} />
+              <StorageDetail label="Storage Start" value={formatDate(selectedStorageContainer.storageStartDate || selectedStorageContainer.storedAt || selectedStorageContainer.updatedAt)} />
+              <StorageDetail label="Days in Yard" value={daysInYard(selectedStorageContainer.storageStartDate || selectedStorageContainer.storedAt || selectedStorageContainer.updatedAt)} />
+              <StorageDetail label="Scheduled Gate-Out" value={formatDate(selectedStorageContainer.outDate)} />
+              <StorageDetail label="Gate-Out Schedule" value={selectedStorageContainer.isOverstaying ? "Overstaying" : selectedStorageContainer.gateOutScheduleStatus} />
+              <StorageDetail label="Overstay Started" value={formatDate(selectedStorageContainer.gateOutOverstayStartedAt)} />
+              <StorageDetail label="Last Updated" value={formatDate(selectedStorageContainer.updatedAt)} />
+            </div>
+          </div>
+        </div>
+      )}
 
       <section className="card p-5">
         <div className="flex items-center gap-2">
@@ -893,5 +962,12 @@ const AdminStorageMonitoring = () => {
     </div>
   )
 }
+
+const StorageDetail = ({ label, value }) => (
+  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+    <div className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</div>
+    <div className="mt-1 break-words text-sm font-bold text-slate-800">{value || "N/A"}</div>
+  </div>
+)
 
 export default AdminStorageMonitoring

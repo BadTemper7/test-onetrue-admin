@@ -18,7 +18,11 @@ import AdminRateSetup from "./pages/modules/AdminRateSetup"
 import AdminPaymentTypes from "./pages/modules/AdminPaymentTypes"
 import AdminBilling from "./pages/modules/AdminBilling"
 import AdminGateOut from "./pages/modules/AdminGateOut"
+import AdminReleaseContainer from "./pages/modules/AdminReleaseContainer"
 import AdminReports from "./pages/modules/AdminReports"
+import AdminPaymentHistory from "./pages/modules/AdminPaymentHistory"
+import AdminAuditLogs from "./pages/modules/AdminAuditLogs"
+import AdminSecuritySettings from "./pages/modules/AdminSecuritySettings"
 import PlaceholderPage from "./pages/modules/PlaceholderPage"
 
 const AdminShell = () => <Layout><Outlet /></Layout>
@@ -55,7 +59,7 @@ function App() {
             <Route path="operations/pre-advice" element={<TitledPage title="Pre-Advice"><ProtectedModule moduleName="operations"><AdminPreAdvice /></ProtectedModule></TitledPage>} />
             <Route path="operations/gate-in" element={<TitledPage title="Gate-In"><ProtectedModule moduleName="operations"><AdminGateIn /></ProtectedModule></TitledPage>} />
             <Route path="operations/tracking" element={<TitledPage title="Container Tracking"><ProtectedModule moduleName="operations"><AdminBookings /></ProtectedModule></TitledPage>} />
-            <Route path="operations/import-export" element={<ProtectedModule moduleName="operations"><Placeholder title="Import and Export" moduleName="Operations" description="Manage import and export container workflows, references, and operational documents." checklist={["Import records", "Export records", "Document validation", "Status tracking"]} /></ProtectedModule>} />
+            <Route path="operations/import-export" element={<Navigate to="/operations/tracking" replace />} />
 
             <Route path="yard/area-setup" element={<TitledPage title="Yard Area Setup"><ProtectedModule moduleName="yard"><AdminYardAreas /></ProtectedModule></TitledPage>} />
             <Route path="yard/inventory" element={<TitledPage title="Inventory"><ProtectedModule moduleName="yard"><AdminInventory /></ProtectedModule></TitledPage>} />
@@ -65,14 +69,15 @@ function App() {
             <Route path="billing/payment-types" element={<TitledPage title="Payment Types"><ProtectedModule moduleName="billing"><AdminPaymentTypes /></ProtectedModule></TitledPage>} />
             <Route path="billing/payment-verification" element={<TitledPage title="Payment Verification"><ProtectedModule moduleName="billing"><AdminBilling /></ProtectedModule></TitledPage>} />
             <Route path="billing/gate-out" element={<TitledPage title="Gate-Out"><ProtectedModule moduleName="billing"><AdminGateOut /></ProtectedModule></TitledPage>} />
-            <Route path="billing/invoices" element={<ProtectedModule moduleName="billing"><Placeholder title="Invoices" moduleName="Billing" description="Review generated invoices and billing details for completed container operations." checklist={["Invoice list", "Client filter", "Payment status", "Export invoice"]} /></ProtectedModule>} />
-            <Route path="billing/payment-history" element={<ProtectedModule moduleName="billing"><Placeholder title="Payment History" moduleName="Billing" description="Review approved, rejected, and pending payment submissions." checklist={["Payment reference", "Booking reference", "Amount", "Review status"]} /></ProtectedModule>} />
+            <Route path="billing/release-container" element={<TitledPage title="Release Container"><ProtectedModule moduleName="billing"><AdminReleaseContainer /></ProtectedModule></TitledPage>} />
+            <Route path="billing/invoices" element={<Navigate to="/billing/payment-history" replace />} />
+            <Route path="billing/payment-history" element={<TitledPage title="Payment History"><ProtectedModule moduleName="billing"><AdminPaymentHistory /></ProtectedModule></TitledPage>} />
 
             <Route path="reports/analytics" element={<TitledPage title="Reports"><ProtectedModule moduleName="reports"><AdminReports /></ProtectedModule></TitledPage>} />
-            <Route path="reports/audit-logs" element={<ProtectedModule moduleName="reports"><Placeholder title="Audit Logs" moduleName="Reports" description="Track important account, booking, yard, billing, and access changes." checklist={["User", "Module", "Action", "Timestamp"]} /></ProtectedModule>} />
+            <Route path="reports/audit-logs" element={<TitledPage title="Audit Logs"><ProtectedModule moduleName="reports"><AdminAuditLogs /></ProtectedModule></TitledPage>} />
 
             <Route path="settings/general" element={<ProtectedModule moduleName="settings"><Placeholder title="General Settings" moduleName="Settings" description="Manage global application defaults and operational configuration." checklist={["Application labels", "Default statuses", "File rules", "Notification rules"]} /></ProtectedModule>} />
-            <Route path="settings/security" element={<ProtectedModule moduleName="settings"><Placeholder title="Security Settings" moduleName="Settings" description="Review account security and access configuration." checklist={["Password policy", "Session rules", "Role access", "Login activity"]} /></ProtectedModule>} />
+            <Route path="settings/security" element={<TitledPage title="Security Settings"><ProtectedModule moduleName="settings" allowedRoles={["super_admin"]}><AdminSecuritySettings /></ProtectedModule></TitledPage>} />
             <Route path="settings/notifications" element={<ProtectedModule moduleName="settings"><Placeholder title="Notification Settings" moduleName="Settings" description="Configure email and real-time notification preferences." checklist={["Email events", "Socket events", "Admin alerts", "Client alerts"]} /></ProtectedModule>} />
           </Route>
         </Route>

@@ -108,9 +108,16 @@ export const adminFlowModules = [
       },
       {
         key: "gateOut",
-        title: "Gate-Out Management",
+        title: "Gate-Out",
         path: "/billing/gate-out",
-        description: "Validate release requests, confirm payment clearance, perform final inspection, and mark the booking as Completed / Gate-Out Done.",
+        description: "Review client Gate-Out requests, process eligible cash payments, confirm online payment approval, and approve the Gate-Out request.",
+        status: "Active",
+      },
+      {
+        key: "releaseContainer",
+        title: "Release Container",
+        path: "/billing/release-container",
+        description: "Show Gate-Out-approved containers that are ready for physical release, complete the release, and review released-container records.",
         status: "Active",
       },
     ],

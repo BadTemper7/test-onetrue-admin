@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
   Edit3,
-  Eye,
   Layers3,
   MapPinned,
   Plus,
@@ -9,13 +8,13 @@ import {
   Ruler,
   Search,
   SlidersHorizontal,
-  Trash2,
   Warehouse,
-  X,
 } from "lucide-react"
 import Alert from "../../components/Alert"
+import ModalCloseButton from "../../components/ui/ModalCloseButton"
 import { api, getApiError } from "../../lib/api"
 import Pagination from "../../components/ui/Pagination"
+import TableCrudActions from "../../components/ui/TableCrudActions"
 import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
 
@@ -241,16 +240,26 @@ const AdminYardAreas = () => {
 
   const handleDelete = async (area) => {
     const confirmed = window.confirm(
-      `Delete ${area.name}? This is only allowed when the area has no inventory blocks.`,
+      `Delete ${area.name}? Occupied areas cannot be removed. Empty blocks inside the area can be removed after a second confirmation.`,
     )
     if (!confirmed) return
 
     try {
       setError("")
       setSuccess("")
-      await api.delete(`/admin/yard/areas/${area.id}`)
+      try {
+        await api.delete(`/admin/yard/areas/${area.id}`)
+      } catch (err) {
+        if (err?.response?.data?.canForceDelete) {
+          const removeEmptyBlocks = window.confirm(`${err.response.data.message} Continue?`)
+          if (!removeEmptyBlocks) return
+          await api.delete(`/admin/yard/areas/${area.id}?force=true`)
+        } else {
+          throw err
+        }
+      }
       setSelectedArea(null)
-      setSuccess("Yard area deleted successfully.")
+      setSuccess("Yard area and its empty blocks were removed successfully.")
       await loadAll()
     } catch (err) {
       setError(getApiError(err))
@@ -384,7 +393,7 @@ const AdminYardAreas = () => {
                 <th className="px-4 py-3">Blocks</th>
                 <th className="px-4 py-3">Purpose</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Action</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -426,13 +435,12 @@ const AdminYardAreas = () => {
                     <span className={`rounded-full px-3 py-1 text-xs font-black capitalize ${statusClass(area.status)}`}>{area.status}</span>
                   </td>
                   <td className="px-4 py-4 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedArea(area)}
-                      className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-slate-800"
-                    >
-                      <Eye size={15} /> View Details
-                    </button>
+                    <TableCrudActions
+                      recordLabel={area.name}
+                      onView={() => setSelectedArea(area)}
+                      onEdit={() => handleEdit(area)}
+                      onDelete={() => handleDelete(area)}
+                    />
                   </td>
                 </tr>
               ))}
@@ -452,13 +460,7 @@ const AdminYardAreas = () => {
                 <h3 className="mt-1 text-2xl font-black text-slate-950">{editingAreaId ? "Edit Yard Area" : "Create Yard Area"}</h3>
                 <p className="mt-1 text-sm font-semibold text-slate-500">Set the physical dimensions, container size, and capacity.</p>
               </div>
-              <button
-                type="button"
-                onClick={closeAreaModal}
-                className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-600 hover:bg-slate-200"
-              >
-                <X size={18} />
-              </button>
+              <ModalCloseButton onClick={closeAreaModal} label="Close yard area form" />
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5 p-5">
@@ -547,13 +549,7 @@ const AdminYardAreas = () => {
                   <span className={`rounded-full px-3 py-1 text-xs font-black capitalize ${statusClass(selectedArea.status)}`}>{selectedArea.status}</span>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setSelectedArea(null)}
-                className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-600 hover:bg-slate-200"
-              >
-                <X size={18} />
-              </button>
+              <ModalCloseButton onClick={() => setSelectedArea(null)} label="Close yard area details" />
             </div>
 
             <div className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -570,14 +566,7 @@ const AdminYardAreas = () => {
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 border-t border-slate-200 p-5 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => handleDelete(selectedArea)} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-50 px-4 py-3 text-sm font-black text-red-700 hover:bg-red-100">
-                <Trash2 size={17} /> Delete Area
-              </button>
-              <button type="button" onClick={() => handleEdit(selectedArea)} className="btn-primary">
-                <Edit3 size={17} /> Edit Area
-              </button>
-            </div>
+
           </div>
         </div>
       )}

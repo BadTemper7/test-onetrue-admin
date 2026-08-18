@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import Alert from "../../components/Alert";
+import Alert from "../../components/Alert"
+import ModalCloseButton from "../../components/ui/ModalCloseButton";
 import { api, getApiError, resolveFileUrl } from "../../lib/api";
 import Pagination from "../../components/ui/Pagination";
+import TableCrudActions from "../../components/ui/TableCrudActions";
+import WorkflowDecisionPanel from "../../components/ui/WorkflowDecisionPanel";
 import { usePagination } from "../../hooks/usePagination";
 import { useClickOutside } from "../../hooks/useClickOutside";
 
@@ -123,6 +126,7 @@ const AdminClients = () => {
   const verifyClient = async (id) => {
     setError("");
     setMessage("");
+    setActionLoading(true);
 
     try {
       const { data } = await api.patch(`/admin/clients/${id}/approve`);
@@ -131,6 +135,8 @@ const AdminClients = () => {
       await loadClients();
     } catch (err) {
       setError(getApiError(err));
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -146,6 +152,7 @@ const AdminClients = () => {
     }
 
     try {
+      setActionLoading(true);
       const { data } = await api.patch(`/admin/clients/${id}/reject`, {
         reason,
       });
@@ -155,6 +162,8 @@ const AdminClients = () => {
       await loadClients();
     } catch (err) {
       setError(getApiError(err));
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -165,7 +174,6 @@ const AdminClients = () => {
     setClientForm({
       name: client.name || "",
       email: client.email || "",
-      status: client.status || "pending",
       companyName: client.companyName || "",
       companyAddress: client.companyAddress || "",
       companyType: client.companyType || "",
@@ -178,12 +186,19 @@ const AdminClients = () => {
     });
   };
 
+  const openClientEdit = (client) => {
+    openClientDetails(client);
+    setIsEditingClient(true);
+  };
+
   const saveClient = async () => {
     if (!selectedClient || !clientForm) return;
     setActionLoading(true);
     setError("");
     try {
-      const { data } = await api.patch(`/admin/clients/${selectedClient.id}`, clientForm);
+      const editableClientFields = { ...clientForm };
+      delete editableClientFields.status;
+      const { data } = await api.patch(`/admin/clients/${selectedClient.id}`, editableClientFields);
       setSelectedClient(data.user);
       setClientForm((current) => ({ ...current, ...data.user }));
       setIsEditingClient(false);
@@ -196,14 +211,17 @@ const AdminClients = () => {
     }
   };
 
-  const deleteClient = async () => {
-    if (!selectedClient || !window.confirm(`Delete ${selectedClient.companyName || selectedClient.name}? This action cannot be undone.`)) return;
+  const deleteClient = async (clientOverride = selectedClient) => {
+    const clientToDelete = clientOverride;
+    if (!clientToDelete || !window.confirm(`Delete ${clientToDelete.companyName || clientToDelete.name}? This action cannot be undone.`)) return;
     setActionLoading(true);
     setError("");
     try {
-      const { data } = await api.delete(`/admin/clients/${selectedClient.id}`);
-      setSelectedClient(null);
-      setClientForm(null);
+      const { data } = await api.delete(`/admin/clients/${clientToDelete.id}`);
+      if (selectedClient?.id === clientToDelete.id) {
+        setSelectedClient(null);
+        setClientForm(null);
+      }
       setMessage(data.message || "Client deleted successfully.");
       await loadClients();
     } catch (err) {
@@ -380,7 +398,7 @@ const AdminClients = () => {
                 <th className="px-4 py-3">Contact</th>
                 <th className="px-4 py-3">Documents</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Action</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
 
@@ -459,13 +477,13 @@ const AdminClients = () => {
                   </td>
 
                   <td className="px-4 py-4 text-right">
-                    <button
-                      type="button"
-                      onClick={() => openClientDetails(client)}
-                      className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-slate-800"
-                    >
-                      View Details
-                    </button>
+                    <TableCrudActions
+                      recordLabel={client.companyName || client.name || client.email || "client"}
+                      onView={() => openClientDetails(client)}
+                      onEdit={() => openClientEdit(client)}
+                      onDelete={() => deleteClient(client)}
+                      deleting={actionLoading && selectedClient?.id === client.id}
+                    />
                   </td>
                 </tr>
               ))}
@@ -509,17 +527,7 @@ const AdminClients = () => {
                 </div>
               </div>
 
-              <div className="flex flex-wrap justify-end gap-2">
-                <button type="button" onClick={() => setIsEditingClient((current) => !current)} className="rounded-2xl bg-blue-50 px-4 py-2 text-sm font-black text-blue-700 hover:bg-blue-100">
-                  {isEditingClient ? "Cancel Edit" : "Edit"}
-                </button>
-                <button type="button" onClick={deleteClient} disabled={actionLoading} className="rounded-2xl bg-red-50 px-4 py-2 text-sm font-black text-red-700 hover:bg-red-100 disabled:opacity-50">
-                  Delete
-                </button>
-                <button type="button" onClick={() => setSelectedClient(null)} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-600 hover:bg-slate-200">
-                  Close
-                </button>
-              </div>
+              <ModalCloseButton onClick={() => setSelectedClient(null)} label="Close client details" />
             </div>
 
             {isEditingClient && clientForm && (
@@ -536,9 +544,14 @@ const AdminClients = () => {
                       <input className="input bg-white" type={field === "email" ? "email" : "text"} value={clientForm[field] || ""} onChange={(event) => setClientForm((current) => ({ ...current, [field]: event.target.value, ...(field === "representativeFirstName" || field === "representativeMiddleName" || field === "representativeLastName" ? { name: [field === "representativeFirstName" ? event.target.value : current.representativeFirstName, field === "representativeMiddleName" ? event.target.value : current.representativeMiddleName, field === "representativeLastName" ? event.target.value : current.representativeLastName].filter(Boolean).join(" ") } : {}) }))} />
                     </label>
                   ))}
-                  <label><span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Status</span><select className="input bg-white" value={clientForm.status || "pending"} onChange={(event) => setClientForm((current) => ({ ...current, status: event.target.value }))}><option value="pending">Pending</option><option value="resubmitted">Resubmitted</option><option value="verified">Verified</option><option value="active">Active</option><option value="rejected">Rejected</option></select></label>
                 </div>
-                <div className="mt-4 flex justify-end"><button type="button" className="btn-primary" onClick={saveClient} disabled={actionLoading}>{actionLoading ? "Saving..." : "Save Client Changes"}</button></div>
+                <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-3 text-xs font-bold leading-5 text-blue-700">
+                  Account approval and rejection are intentionally managed only from the View modal. Editing updates profile information without changing verification status.
+                </div>
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:justify-end">
+                  <button type="button" className="btn-secondary" onClick={() => setIsEditingClient(false)} disabled={actionLoading}>Cancel</button>
+                  <button type="button" className="btn-primary" onClick={saveClient} disabled={actionLoading}>{actionLoading ? "Saving..." : "Save Client Changes"}</button>
+                </div>
               </div>
             )}
 
@@ -655,53 +668,33 @@ const AdminClients = () => {
                 </div>
               )}
 
-              <div className="rounded-2xl border border-slate-200 p-5 lg:col-span-2">
-                <h4 className="text-sm font-black uppercase tracking-wide text-slate-500">
-                  Admin Decision
-                </h4>
-
-                <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_220px]">
-                  <textarea
-                    className="input min-h-[110px] !rounded-2xl !p-4 text-sm"
-                    placeholder="Add rejection reason here before rejecting the account"
-                    value={rejectReasons[selectedClient.id] || ""}
-                    onChange={(event) =>
-                      setRejectReasons((prev) => ({
-                        ...prev,
-                        [selectedClient.id]: event.target.value,
-                      }))
-                    }
-                    disabled={isVerifiedStatus(selectedClient.status)}
-                  />
-
-                  <div className="space-y-3">
-                    <button
-                      type="button"
-                      className="w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={isVerifiedStatus(selectedClient.status)}
-                      onClick={() => verifyClient(selectedClient.id)}
-                    >
-                      Verify Account
-                    </button>
-
-                    <button
-                      type="button"
-                      className="w-full rounded-2xl bg-red-600 px-4 py-3 text-sm font-black text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={isVerifiedStatus(selectedClient.status)}
-                      onClick={() => rejectClient(selectedClient.id)}
-                    >
-                      Reject Account
-                    </button>
+              {!isEditingClient && (
+                <WorkflowDecisionPanel
+                  className="lg:col-span-2"
+                  eyebrow="Client Verification"
+                  title="Admin Decision"
+                  description="Review the company, representative, consent, and uploaded documents before verifying or rejecting this account."
+                  approveLabel="Verify Account"
+                  onApprove={() => verifyClient(selectedClient.id)}
+                  approveDisabled={actionLoading || isVerifiedStatus(selectedClient.status)}
+                  rejectLabel="Reject Account"
+                  rejectReason={rejectReasons[selectedClient.id] || ""}
+                  onRejectReasonChange={(value) => setRejectReasons((prev) => ({ ...prev, [selectedClient.id]: value }))}
+                  rejectPlaceholder="Explain why this client account is being rejected"
+                  rejectFieldDisabled={isVerifiedStatus(selectedClient.status)}
+                  onReject={() => rejectClient(selectedClient.id)}
+                  rejectDisabled={actionLoading || isVerifiedStatus(selectedClient.status) || !(rejectReasons[selectedClient.id] || "").trim()}
+                  note={isVerifiedStatus(selectedClient.status)
+                    ? "This account is already verified or active. Decision actions are disabled."
+                    : "Approval and rejection are available only in this View modal. Editing client information does not change the verification decision."}
+                >
+                  <div className="grid gap-3 rounded-3xl bg-slate-50 p-4 text-sm sm:grid-cols-3">
+                    <div><span className="font-black text-slate-500">Current Status:</span> <span className="capitalize">{selectedClient.status}</span></div>
+                    <div><span className="font-black text-slate-500">Documents:</span> {(selectedClient.documents || []).length}</div>
+                    <div><span className="font-black text-slate-500">Consent:</span> {selectedClient.legalConsent?.termsAccepted && selectedClient.legalConsent?.privacyAccepted && selectedClient.legalConsent?.representativeAuthorityConfirmed ? "Complete" : "Incomplete"}</div>
                   </div>
-                </div>
-
-                {isVerifiedStatus(selectedClient.status) && (
-                  <p className="mt-3 text-xs font-bold text-slate-500">
-                    This account is already verified or active. Decision actions
-                    are disabled.
-                  </p>
-                )}
-              </div>
+                </WorkflowDecisionPanel>
+              )}
             </div>
           </div>
         </div>

@@ -20,7 +20,6 @@ import {
   FiGrid,
   FiDollarSign,
   FiCreditCard,
-  FiArrowRight,
   FiCornerDownRight,
   FiActivity,
 } from "react-icons/fi";
@@ -91,11 +90,6 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
           path: "/operations/tracking",
           icon: FiPackage,
         },
-        {
-          name: "Import/export",
-          path: "/operations/import-export",
-          icon: FiArrowRight,
-        },
       ],
     },
     {
@@ -126,8 +120,8 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
           path: "/billing/payment-verification",
           icon: FiCreditCard,
         },
-        { name: "Gate-out", path: "/billing/gate-out", icon: FiLogOut },
-        { name: "Invoices", path: "/billing/invoices", icon: FiFileText },
+        { name: "Gate-out", path: "/billing/gate-out", icon: FiCornerDownRight },
+        { name: "Release Container", path: "/billing/release-container", icon: FiLogOut },
         {
           name: "Payment history",
           path: "/billing/payment-history",
@@ -152,7 +146,7 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
       key: "settings",
       children: [
         { name: "General", path: "/settings/general", icon: FiSettings },
-        { name: "Security", path: "/settings/security", icon: FiShield },
+        { name: "Security", path: "/settings/security", icon: FiShield, allowedRoles: ["super_admin"] },
         {
           name: "Notifications",
           path: "/settings/notifications",
@@ -169,15 +163,14 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
     "/operations/pre-advice": "operations",
     "/operations/gate-in": "operations",
     "/operations/tracking": "operations",
-    "/operations/import-export": "operations",
     "/yard/area-setup": "yard",
     "/yard/inventory": "yard",
     "/yard/storage-monitoring": "yard",
     "/billing/rate-setup": "billing",
     "/billing/payment-types": "billing",
     "/billing/payment-verification": "billing",
+    "/billing/release-container": "billing",
     "/billing/gate-out": "billing",
-    "/billing/invoices": "billing",
     "/billing/payment-history": "billing",
     "/reports/analytics": "reports",
     "/reports/audit-logs": "reports",

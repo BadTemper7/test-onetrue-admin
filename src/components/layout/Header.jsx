@@ -36,7 +36,9 @@ const notificationLabels = {
   "booking:payment_rejected": "Payment rejected",
   "booking:cash_payment_recorded": "Cash payment recorded",
   "booking:gate_out_requested": "Gate-out request submitted",
+  "booking:gate_out_rejected": "Gate-out request rejected",
   "booking:gate_out_approved": "Gate-out approved",
+  "booking:overstay_billing_recomputed": "Overstay billing recomputed",
   "booking:completed": "Container released",
 };
 
@@ -50,6 +52,7 @@ const notificationRoute = (type) => {
   if (type.includes("payment") || type.includes("billing") || type.includes("charge")) {
     return "/billing/payment-verification";
   }
+  if (type === "booking:completed") return "/billing/release-container";
   if (type.includes("gate_out")) return "/billing/gate-out";
   if (type.includes("stored") || type.includes("relocated")) return "/yard/inventory";
   return "/dashboard";

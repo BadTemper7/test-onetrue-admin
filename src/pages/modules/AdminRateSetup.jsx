@@ -8,11 +8,11 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
-  Trash2,
-  X,
 } from "lucide-react"
 import Alert from "../../components/Alert"
+import ModalCloseButton from "../../components/ui/ModalCloseButton"
 import Pagination from "../../components/ui/Pagination"
+import TableCrudActions from "../../components/ui/TableCrudActions"
 import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
 import { api, getApiError } from "../../lib/api"
@@ -88,6 +88,7 @@ const AdminRateSetup = () => {
   const filterRef = useRef(null)
   const [form, setForm] = useState(initialForm)
   const [editingRate, setEditingRate] = useState(null)
+  const [selectedRate, setSelectedRate] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -324,7 +325,14 @@ const AdminRateSetup = () => {
                   <td className="px-5 py-4 font-black text-slate-950">{rate.description}</td>
                   <td className="px-5 py-4 font-semibold text-slate-600">{getUnitLabel(rate)}</td>
                   <td className="px-5 py-4 text-lg font-black text-slate-950">{formatMoney(rate.rateAmount)}</td>
-                  <td className="px-5 py-4"><div className="flex justify-end gap-2"><button type="button" onClick={() => openEdit(rate)} className="grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-700 transition hover:bg-blue-100" aria-label={`Edit ${rate.description}`} title="Edit rate"><Pencil size={16} /></button><button type="button" onClick={() => deleteRate(rate)} className="grid h-10 w-10 place-items-center rounded-xl bg-red-50 text-red-700 transition hover:bg-red-100" aria-label={`Delete ${rate.description}`} title="Delete rate"><Trash2 size={16} /></button></div></td>
+                  <td className="px-5 py-4">
+                    <TableCrudActions
+                      recordLabel={`${getRateTypeLabel(getRateType(rate))} ${rate.description} rate`}
+                      onView={() => setSelectedRate(rate)}
+                      onEdit={() => openEdit(rate)}
+                      onDelete={() => deleteRate(rate)}
+                    />
+                  </td>
                 </tr>
               ))}
               {!loading && filteredRates.length === 0 && <tr><td colSpan="4" className="px-5 py-16 text-center font-semibold text-slate-500">No {activeRateTypeLabel.toLowerCase()} billing rates found.</td></tr>}
@@ -333,6 +341,27 @@ const AdminRateSetup = () => {
         </div>
         <Pagination {...pagination} />
       </section>
+
+
+      {selectedRate && (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-6">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Billing Rate Details</p>
+                <h2 className="mt-1 text-2xl font-black text-slate-950">{selectedRate.description}</h2>
+              </div>
+              <ModalCloseButton onClick={() => setSelectedRate(null)} label="Close billing rate details" />
+            </div>
+            <div className="grid gap-4 p-6 sm:grid-cols-2">
+              <Detail label="Rate Group" value={getRateTypeLabel(getRateType(selectedRate))} />
+              <Detail label="Description" value={selectedRate.description} />
+              <Detail label="Unit" value={getUnitLabel(selectedRate)} />
+              <Detail label="Rate" value={`PHP ${formatMoney(selectedRate.rateAmount)}`} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {modalOpen && (
         <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm">
@@ -343,7 +372,7 @@ const AdminRateSetup = () => {
                 <h2 className="mt-1 text-2xl font-black text-slate-950">{editingRate ? `Edit ${activeRateTypeLabel} Rate` : `Add ${activeRateTypeLabel} Rate`}</h2>
                 <p className="mt-1 text-sm text-slate-500">Set the billing description, unit, and amount for the selected rate group.</p>
               </div>
-              <button type="button" onClick={closeModal} className="grid h-10 w-10 place-items-center rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200"><X size={18} /></button>
+              <ModalCloseButton onClick={closeModal} label="Close rate form" />
             </div>
 
             <div className="space-y-5 p-6">
@@ -361,5 +390,12 @@ const AdminRateSetup = () => {
     </div>
   )
 }
+
+const Detail = ({ label, value }) => (
+  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+    <div className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</div>
+    <div className="mt-1 break-words text-sm font-bold text-slate-800">{value || "N/A"}</div>
+  </div>
+)
 
 export default AdminRateSetup

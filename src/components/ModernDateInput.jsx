@@ -55,6 +55,8 @@ const ModernDateInput = ({
   max,
   disabled = false,
   placeholder,
+  clearable = true,
+  variant = "default",
 }) => {
   const isDateOnly = type === "date"
   const selectedDate = parseDateValue(value)
@@ -69,7 +71,7 @@ const ModernDateInput = ({
   return (
     <label className="block">
       {label && <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">{label}</span>}
-      <div className="modern-date-picker">
+      <div className={`modern-date-picker ${variant === "compact" ? "modern-date-picker--compact" : ""}`}>
         <div className="modern-date-icon">
           <CalendarDays size={18} />
         </div>
@@ -86,12 +88,13 @@ const ModernDateInput = ({
           disabled={disabled}
           name={name}
           required={required}
-          isClearable={!required && Boolean(value)}
+          isClearable={clearable && !required && Boolean(value)}
           className="modern-date-input"
           calendarClassName="otli-datepicker-calendar"
           popperClassName="otli-datepicker-popper"
           wrapperClassName="modern-date-wrapper"
           popperPlacement="bottom-start"
+          portalId="root"
           autoComplete="off"
           shouldCloseOnSelect={isDateOnly}
         />
