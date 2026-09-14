@@ -9,6 +9,7 @@ import ContainerClassificationBadges from "../../components/ui/ContainerClassifi
 import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
 import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const MAP_WIDTH = 980
 const MAP_HEIGHT = 600
@@ -686,6 +687,12 @@ const AdminStorageMonitoring = () => {
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
   const [loading, setLoading] = useState(true)
+  const storageRequestRef = useRef(0)
+  const storageAbortRef = useRef(null)
+  const storageInFlightRef = useRef({ key: "", promise: null })
+  const initialLoadStartedRef = useRef(false)
+  const realtimeRefreshTimerRef = useRef(null)
+  const realtimeRefreshFlagsRef = useRef({ inventory: false, yard: false })
   const [alert, setAlert] = useState({ type: "", message: "" })
 
   useClickOutside(filterRef, () => setShowFilters(false), showFilters)
@@ -715,10 +722,21 @@ const AdminStorageMonitoring = () => {
     return selectedBlockId ? selectedAreaContainers.filter((container) => container.block === selectedBlockId) : selectedAreaContainers
   }, [selectedAreaContainers, selectedBlockId])
 
+  const storageFilterKey = `${selectedAreaId}|${selectedBlockId}|${selectedLoadStatus}|${selectedRateType}|${search.trim()}`
+  const storageFilterRef = useRef(null)
+  storageFilterRef.current = {
+    selectedAreaId,
+    selectedBlockId,
+    selectedLoadStatus,
+    selectedRateType,
+    search: search.trim(),
+  }
+  const lastRequestedStorageFilterKeyRef = useRef(storageFilterKey)
+
   const storagePagination = usePagination(
     selectedBlockContainers,
     10,
-    `${selectedAreaId}|${selectedBlockId}|${selectedLoadStatus}|${selectedRateType}|${search}`,
+    storageFilterKey,
   )
 
   const usedCapacity = useMemo(() => {
@@ -755,8 +773,40 @@ const AdminStorageMonitoring = () => {
   }
 
   const loadContainers = async () => {
-    const { data } = await api.get("/admin/inventory/containers")
-    setContainers(data.containers || [])
+    const filters = storageFilterRef.current || {}
+    const params = new URLSearchParams({ view: "storage", limit: "180", includeStats: "false" })
+    if (filters.selectedAreaId) params.set("areaId", filters.selectedAreaId)
+    if (filters.selectedBlockId) params.set("blockId", filters.selectedBlockId)
+    if (filters.selectedLoadStatus && filters.selectedLoadStatus !== "all") params.set("loadStatus", filters.selectedLoadStatus)
+    if (filters.selectedRateType && filters.selectedRateType !== "all") params.set("rateType", filters.selectedRateType)
+    if (filters.search) params.set("search", filters.search)
+
+    const requestKey = params.toString()
+    const currentInFlight = storageInFlightRef.current
+    if (currentInFlight.promise && currentInFlight.key === requestKey) return currentInFlight.promise
+
+    if (storageAbortRef.current) storageAbortRef.current.abort()
+    const controller = new AbortController()
+    storageAbortRef.current = controller
+    const requestId = ++storageRequestRef.current
+
+    let requestPromise
+    requestPromise = api.get(`/admin/inventory/containers?${requestKey}`, { signal: controller.signal })
+      .then(({ data }) => {
+        if (requestId !== storageRequestRef.current) return
+        setContainers(data.containers || [])
+      })
+      .catch((error) => {
+        if (error?.code === "ERR_CANCELED" || error?.name === "CanceledError" || controller.signal.aborted) return
+        throw error
+      })
+      .finally(() => {
+        if (storageInFlightRef.current.promise === requestPromise) storageInFlightRef.current = { key: "", promise: null }
+        if (storageAbortRef.current === controller) storageAbortRef.current = null
+      })
+
+    storageInFlightRef.current = { key: requestKey, promise: requestPromise }
+    return requestPromise
   }
 
   const loadAll = async () => {
@@ -764,15 +814,20 @@ const AdminStorageMonitoring = () => {
       setLoading(true)
       setAlert({ type: "", message: "" })
       await Promise.all([loadAreas(), loadContainers()])
-      if (selectedAreaId) await loadBlocks(selectedAreaId)
+      const areaId = storageFilterRef.current?.selectedAreaId
+      if (areaId) await loadBlocks(areaId)
     } catch (error) {
-      setAlert({ type: "error", message: getApiError(error) })
+      if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
+        setAlert({ type: "error", message: getApiError(error) })
+      }
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
+    if (initialLoadStartedRef.current) return
+    initialLoadStartedRef.current = true
     loadAll()
   }, [])
 
@@ -788,15 +843,60 @@ const AdminStorageMonitoring = () => {
   }, [selectedAreaId])
 
   useEffect(() => {
+    if (lastRequestedStorageFilterKeyRef.current === storageFilterKey) return undefined
+    const timer = window.setTimeout(() => {
+      lastRequestedStorageFilterKeyRef.current = storageFilterKey
+      setLoading(true)
+      loadContainers()
+        .catch((error) => {
+          if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
+            setAlert({ type: "error", message: getApiError(error) })
+          }
+        })
+        .finally(() => setLoading(false))
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [storageFilterKey])
+
+  useEffect(() => {
     const handleRealtime = (event) => {
       const eventType = event.detail?.type || ""
-      if (!eventType.startsWith("booking:") && !eventType.startsWith("storage:") && !eventType.startsWith("inventory:") && !eventType.startsWith("yard:")) return
-      loadAll()
+      const yardChanged = eventType.startsWith("yard:") || eventType.startsWith("inventory:block_")
+      const inventoryChanged = eventType.startsWith("booking:")
+        || eventType.startsWith("storage:")
+        || ["inventory:container_assigned", "inventory:container_created", "inventory:legacy_container_created", "inventory:updated"].includes(eventType)
+      if (!inventoryChanged && !yardChanged) return
+
+      realtimeRefreshFlagsRef.current = {
+        inventory: realtimeRefreshFlagsRef.current.inventory || inventoryChanged,
+        yard: realtimeRefreshFlagsRef.current.yard || yardChanged,
+      }
+      if (realtimeRefreshTimerRef.current) window.clearTimeout(realtimeRefreshTimerRef.current)
+      realtimeRefreshTimerRef.current = window.setTimeout(() => {
+        const flags = realtimeRefreshFlagsRef.current
+        realtimeRefreshFlagsRef.current = { inventory: false, yard: false }
+        realtimeRefreshTimerRef.current = null
+        const jobs = []
+        if (flags.inventory) jobs.push(loadContainers())
+        if (flags.yard) {
+          jobs.push(loadAreas())
+          const areaId = storageFilterRef.current?.selectedAreaId
+          if (areaId) jobs.push(loadBlocks(areaId))
+        }
+        Promise.all(jobs).catch((error) => {
+          if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
+            setAlert({ type: "error", message: getApiError(error) })
+          }
+        })
+      }, 400)
     }
 
     window.addEventListener("otli:realtime", handleRealtime)
-    return () => window.removeEventListener("otli:realtime", handleRealtime)
-  }, [selectedAreaId])
+    return () => {
+      window.removeEventListener("otli:realtime", handleRealtime)
+      if (realtimeRefreshTimerRef.current) window.clearTimeout(realtimeRefreshTimerRef.current)
+    }
+  }, [])
 
   const handleRefresh = async () => {
     await loadAll()
@@ -876,6 +976,7 @@ const AdminStorageMonitoring = () => {
               <tr><th className="px-5 py-3">Container</th><th className="px-5 py-3">Customer</th><th className="px-5 py-3">Area / Block / Slot</th><th className="px-5 py-3">Size / Type</th><th className="px-5 py-3">Storage Start</th><th className="px-5 py-3">Days</th><th className="px-5 py-3">Status</th><th className="px-5 py-3 text-right">Actions</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
+              {loading && selectedBlockContainers.length === 0 && <TableLoadingRow colSpan={8} rows={6} actionColumn label="Loading storage containers" />}
               {selectedBlockContainers.length === 0 && !loading && <tr><td colSpan="8" className="px-5 py-12 text-center font-semibold text-slate-500">No stored containers found for the selected view.</td></tr>}
               {storagePagination.paginatedItems.map((container) => {
                 const displayStatus = container.bookingStatus || container.status

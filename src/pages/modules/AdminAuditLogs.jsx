@@ -4,6 +4,7 @@ import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
 import TableCrudActions from "../../components/ui/TableCrudActions"
 import { api, getApiError } from "../../lib/api"
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const actionClass = {
   add: "bg-emerald-50 text-emerald-700",
@@ -141,6 +142,7 @@ const AdminAuditLogs = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
+              {loading && logs.length === 0 && <TableLoadingRow colSpan={7} rows={6} actionColumn label="Loading audit logs" />}
               {logs.map((log) => (
                 <tr key={log.id} className="hover:bg-slate-50">
                   <td className="px-4 py-4 font-semibold text-slate-600">

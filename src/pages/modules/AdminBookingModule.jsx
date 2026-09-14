@@ -10,6 +10,7 @@ import {
   Eye,
   MapPinned,
   PackageCheck,
+  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -34,6 +35,7 @@ import { api, getApiError, resolveFileUrl } from "../../lib/api"
 import { useAuthStore } from "../../stores/authStore"
 import { hasModulePermission } from "../../lib/permissions"
 import { printBookingDocument } from "../../lib/printDocument"
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const statusLabels = {
   pending_admin_approval: "Pending Admin Approval",
@@ -46,19 +48,6 @@ const statusLabels = {
   gate_out_reversal_requested: "Gate-Out Reversal Requested",
   completed_gate_out_done: "Completed / Gate-Out Done",
   cancelled: "Cancelled",
-}
-
-const toDateOnlyString = (value) => {
-  if (!value) return ""
-  if (typeof value === "string") return value.slice(0, 10)
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ""
-
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, "0")
-  const day = String(date.getDate()).padStart(2, "0")
-  return `${year}-${month}-${day}`
 }
 
 const toDateTimeLocalString = (value) => {
@@ -181,8 +170,15 @@ const getCashPaymentDisabledReason = (booking = {}) => {
     return "Cash payment is available only for Gate-In LOLO when configured for Gate-In, or an active Gate-Out balance."
   }
 
-  if (booking.billingStatus === "paid_approved" && Number(booking.paymentBalanceDue || 0) <= 0) {
-    return "Cash payment is disabled because this billing stage is already paid."
+  if (isGateInPayment && booking.billingStatus === "paid_approved" && Number(booking.paymentBalanceDue || 0) <= 0) {
+    return "Cash payment is disabled because the Gate-In LOLO transaction is already paid."
+  }
+
+  // Once the Gate-Out transaction is fully paid / approved, payment is locked.
+  // Release Container must use that approved Gate-Out payment and must not
+  // create or request another payment during physical release.
+  if (isGateOutPayment && booking.billingStatus === "paid_approved" && Number(booking.paymentBalanceDue || 0) <= 0) {
+    return "Gate-Out payment is already paid / approved. No additional payment is required before release."
   }
 
   if (hasExistingOnlinePayment(booking)) {
@@ -212,6 +208,77 @@ const getRequiredYardCapacity = (containerSize, yardContainerSize) => {
 const blockHasCapacity = (block, booking) => {
   if (!block || !booking) return false
   return Number(block.availableSlots || 0) >= getRequiredYardCapacity(booking.containerSize, block.containerSize)
+}
+
+const PaymentHistoryBreakdown = ({ booking, className = "" }) => {
+  const transactions = Array.isArray(booking?.paymentTransactions) ? booking.paymentTransactions : []
+  const totalPaid = transactions.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const gateInPaid = transactions.filter((item) => item.paymentStage === "gate_in").reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const gateOutPaid = transactions.filter((item) => item.paymentStage === "gate_out").reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const currentGateOutBalance = booking?.status === "gate_out_approved"
+    ? 0
+    : Number(booking?.paymentBalanceDue ?? booking?.paymentAmount ?? 0)
+  return (
+    <div className={`rounded-3xl border border-slate-200 bg-white p-5 ${className}`}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Billing Information</p><h3 className="mt-1 text-lg font-black text-slate-950">Complete Payment History</h3><p className="mt-1 text-xs font-semibold text-slate-500">Gate-In and Gate-Out payments are shown together for this booking, while each remains a separate transaction.</p></div><div className="rounded-2xl bg-slate-50 px-4 py-3 text-right"><p className="text-xs font-black uppercase text-slate-400">Total Paid</p><p className="mt-1 text-lg font-black text-slate-900">PHP {totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div></div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3"><div className="rounded-2xl bg-amber-50 p-4"><p className="text-xs font-black uppercase text-amber-700">Gate-In</p><p className="mt-1 text-xl font-black text-slate-900">PHP {gateInPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div><div className="rounded-2xl bg-blue-50 p-4"><p className="text-xs font-black uppercase text-blue-700">Gate-Out</p><p className="mt-1 text-xl font-black text-slate-900">PHP {gateOutPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div><div className="rounded-2xl bg-emerald-50 p-4"><p className="text-xs font-black uppercase text-emerald-700">Current Gate-Out Balance</p><p className="mt-1 text-xl font-black text-slate-900">PHP {currentGateOutBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div></div>
+      {transactions.length === 0 ? <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm font-semibold text-slate-500">No approved payment transactions have been recorded yet.</div> : <div className="mt-4 space-y-3">{transactions.map((payment, index) => { const stage = payment.paymentStage === "gate_in" ? "Gate-In LOLO" : "Gate-Out"; return <div key={payment.id || `${stage}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><span className={`rounded-full px-3 py-1 text-xs font-black ${payment.paymentStage === "gate_in" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{stage}</span><p className="mt-2 text-xs font-semibold text-slate-500">{formatDate(payment.paymentDate)}{payment.referenceNumber ? ` • Ref ${payment.referenceNumber}` : ""}{payment.receiptNumber ? ` • Receipt ${payment.receiptNumber}` : ""}</p></div><p className="text-xl font-black text-slate-900">PHP {Number(payment.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>{Array.isArray(payment.lineItems) && payment.lineItems.length > 0 && <div className="mt-3 border-t border-slate-200 pt-3"><p className="text-xs font-black uppercase tracking-wide text-slate-400">Transaction Breakdown</p><div className="mt-2 space-y-2">{payment.lineItems.map((item, itemIndex) => <div key={`${item.chargeCode || item.description}-${itemIndex}`} className="flex items-center justify-between gap-3 text-sm"><span className="font-semibold text-slate-700">{String(item.chargeCode || "").startsWith("LIFT_ON") ? "Lift On Charge" : String(item.chargeCode || "").startsWith("LIFT_OFF") ? "Lift Off Charge" : item.description || item.chargeCode}</span><span className="font-black text-slate-900">PHP {Number(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>)}</div><div className="mt-3 flex justify-between border-t border-slate-200 pt-3 text-sm"><span className="font-semibold text-slate-600">Subtotal + VAT</span><span className="font-black text-slate-900">PHP {Number(payment.grossTotal || payment.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div></div>}</div> })}</div>}
+    </div>
+  )
+}
+
+
+const StagePaymentAdjustment = ({ booking, stage, onEdit }) => {
+  const transactions = (booking?.paymentTransactions || []).filter((item) => item.paymentStage === stage)
+  const paidTotal = transactions.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const billingTotal = stage === "gate_in"
+    ? Number(booking?.gateInBillingTotal || 0)
+    : Number(booking?.gateOutBillingTotal ?? booking?.billingTotal ?? 0)
+  const balanceDue = Math.max(Math.round((billingTotal - paidTotal) * 100) / 100, 0)
+  const stageLabel = stage === "gate_in" ? "Gate-In" : "Gate-Out"
+
+  return (
+    <div className="card border-violet-200 bg-violet-50/50 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-violet-700">Super Admin Editable Pay</p>
+          <h3 className="mt-1 text-lg font-black text-slate-950">{stageLabel} Payment</h3>
+          <p className="mt-1 text-sm font-semibold text-slate-600">Correct an approved {stageLabel} payment amount without changing the billing breakdown. Any remaining balance is recalculated automatically.</p>
+        </div>
+        <div className="grid min-w-[180px] grid-cols-2 gap-2 text-right">
+          <div className="rounded-2xl bg-white px-3 py-2 shadow-sm">
+            <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Paid</p>
+            <p className="mt-1 font-black text-slate-900">PHP {paidTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          </div>
+          <div className="rounded-2xl bg-white px-3 py-2 shadow-sm">
+            <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Balance</p>
+            <p className={`mt-1 font-black ${balanceDue > 0 ? "text-amber-700" : "text-emerald-700"}`}>PHP {balanceDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          </div>
+        </div>
+      </div>
+
+      {transactions.length === 0 ? (
+        <div className="mt-4 rounded-2xl border border-violet-100 bg-white p-4 text-sm font-semibold text-slate-500">
+          No approved {stageLabel} payment exists yet. Record or approve the payment first, then the Pay amount becomes editable here.
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {transactions.map((payment, index) => (
+            <div key={payment.id || `${stage}-${index}`} className="flex flex-col gap-3 rounded-2xl border border-violet-100 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-black text-slate-900">{payment.referenceNumber ? `Reference ${payment.referenceNumber}` : `${stageLabel} Payment ${index + 1}`}</p>
+                <p className="mt-1 text-xs font-semibold text-slate-500">{formatDate(payment.paymentDate || payment.approvedAt)}{payment.receiptNumber ? ` • Receipt ${payment.receiptNumber}` : ""}</p>
+                <p className="mt-2 text-xl font-black text-slate-950">PHP {Number(payment.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              </div>
+              <button type="button" onClick={() => onEdit(payment)} className="btn-secondary shrink-0">
+                <Pencil size={16} /> Edit Pay
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 const Field = ({ label, children, hint }) => (
@@ -291,6 +358,26 @@ const initialGateIn = {
   inspectionRemarks: "",
 }
 
+const initialGateInDetails = {
+  containerNumber: "",
+  containerSize: "20",
+  containerType: "dry",
+  containerLoadStatus: "empty",
+  rateType: "local",
+  shippingLine: "",
+  bookingNumber: "",
+  blNumber: "",
+  vesselVoyage: "",
+  cargoDescription: "",
+  weight: "",
+  inDate: "",
+  truckPlateNumber: "",
+  driverName: "",
+  driverLicenseNumber: "",
+  hauler: "",
+  clientRemarks: "",
+}
+
 const AdminBookingModule = ({ mode }) => {
   const config = moduleConfig[mode] || moduleConfig.preAdvice
   const location = useLocation()
@@ -311,8 +398,9 @@ const AdminBookingModule = ({ mode }) => {
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
   const [filters, setFilters] = useState({ status: config.defaultStatus, billingStatus: config.defaultBillingStatus, loadStatus: "all", rateType: "all", search: "" })
-  const [approval, setApproval] = useState({ areaId: "", blockId: "", bay: "", row: "", tier: "", loloPaymentStage: "gate_in" })
+  const [approval, setApproval] = useState({ areaId: "", blockId: "", bay: "", row: "", tier: "", loloPaymentStage: "gate_out" })
   const [gateIn, setGateIn] = useState(initialGateIn)
+  const [gateInDetails, setGateInDetails] = useState(initialGateInDetails)
   const [releaseConditions, setReleaseConditions] = useState({ gateOutConditions: [], gateOutConditionOther: "" })
   const [rejectReason, setRejectReason] = useState("")
   const [paymentRejectReason, setPaymentRejectReason] = useState("")
@@ -323,12 +411,11 @@ const AdminBookingModule = ({ mode }) => {
   const [cashAdditionalItems, setCashAdditionalItems] = useState([])
   const [showCashModal, setShowCashModal] = useState(false)
   const [cashBookingId, setCashBookingId] = useState("")
+  const [showPaymentAdjustmentModal, setShowPaymentAdjustmentModal] = useState(false)
+  const [paymentAdjustment, setPaymentAdjustment] = useState({ transactionId: "", paymentStage: "gate_in", amount: "", previousAmount: 0, referenceNumber: "", reason: "" })
   const [congestionOption, setCongestionOption] = useState(null)
   const [congestionLoading, setCongestionLoading] = useState(false)
-  const [overstayPreview, setOverstayPreview] = useState(null)
-  const [overstayPreviewLoading, setOverstayPreviewLoading] = useState(false)
   const [gateOutDates, setGateOutDates] = useState({ inDate: "", outDate: "" })
-  const [overstayPolicy, setOverstayPolicy] = useState({ waive: false, reason: "" })
   const [remarks, setRemarks] = useState("")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -351,14 +438,12 @@ const AdminBookingModule = ({ mode }) => {
     setGateOutRejectReason("")
     setReversalRejectReason("")
     setRemarks("")
-    setOverstayPreview(null)
     setSelectedId(booking.id)
   }
 
   const closeBookingModal = () => {
     setSelectedId("")
     setSelectedModalMode("view")
-    setOverstayPreview(null)
   }
   const cashBooking = useMemo(() => bookings.find((booking) => booking.id === cashBookingId) || null, [bookings, cashBookingId])
   const cashPaymentStage = cashBooking?.status === "approved_area_assigned" ? "gate_in" : "gate_out"
@@ -375,7 +460,11 @@ const AdminBookingModule = ({ mode }) => {
   const cashVatRate = Number(cashBooking?.vatRate || 0.12)
   const cashVatAmount = cashPayment.isVatApplicable ? Math.round(cashSubtotal * cashVatRate * 100) / 100 : 0
   const cashGrossTotal = Math.round((cashSubtotal + cashVatAmount) * 100) / 100
-  const cashApprovedCredit = Math.max(Number(cashBooking?.approvedPaymentAmount || 0), 0)
+  const cashGateInPayment = Math.max((cashBooking?.paymentTransactions || []).filter((item) => item.paymentStage === "gate_in").reduce((sum, item) => sum + Number(item.amount || 0), 0), 0)
+  const cashGateOutPayment = Math.max((cashBooking?.paymentTransactions || []).filter((item) => item.paymentStage === "gate_out").reduce((sum, item) => sum + Number(item.amount || 0), 0), 0)
+  const cashApprovedCredit = cashPaymentStage === "gate_in"
+    ? Math.max(cashGateInPayment, Number(cashBooking?.approvedPaymentAmount || 0))
+    : cashGateOutPayment
   const cashTotal = Math.max(Math.round((cashGrossTotal - cashApprovedCredit) * 100) / 100, 0)
   const cashReceivedValue = Number(cashPayment.cashReceived || 0)
   const cashChange = Math.max(Math.round((cashReceivedValue - cashTotal) * 100) / 100, 0)
@@ -616,7 +705,7 @@ const AdminBookingModule = ({ mode }) => {
       bay: selectedBooking.assignedBay || "",
       row: selectedBooking.assignedRow || "",
       tier: selectedBooking.assignedTier || "",
-      loloPaymentStage: selectedBooking.loloPaymentStage === "gate_out" ? "gate_out" : "gate_in",
+      loloPaymentStage: selectedBooking.loloPaymentStage === "gate_in" ? "gate_in" : "gate_out",
     })
 
     const normalizedGateInConditions = normalizeConditionSelections(selectedBooking.gateInConditions)
@@ -635,6 +724,26 @@ const AdminBookingModule = ({ mode }) => {
       inspectionRemarks: selectedBooking.inspectionRemarks || "",
     })
 
+    setGateInDetails({
+      containerNumber: selectedBooking.containerNumber || "",
+      containerSize: String(selectedBooking.containerSize || 20),
+      containerType: selectedBooking.containerType || "dry",
+      containerLoadStatus: selectedBooking.containerLoadStatus || "empty",
+      rateType: selectedBooking.rateType || "local",
+      shippingLine: selectedBooking.shippingLine || "",
+      bookingNumber: selectedBooking.bookingNumber || "",
+      blNumber: selectedBooking.blNumber || "",
+      vesselVoyage: selectedBooking.vesselVoyage || "",
+      cargoDescription: selectedBooking.cargoDescription || "",
+      weight: selectedBooking.weight ?? "",
+      inDate: toDateTimeLocalString(getBookingInDate(selectedBooking)),
+      truckPlateNumber: selectedBooking.truckPlateNumber || "",
+      driverName: selectedBooking.driverName || "",
+      driverLicenseNumber: selectedBooking.driverLicenseNumber || "",
+      hauler: selectedBooking.hauler || "",
+      clientRemarks: selectedBooking.clientRemarks || "",
+    })
+
     setReleaseConditions({
       gateOutConditions: normalizedGateOutConditions.length ? normalizedGateOutConditions : (normalizedGateInConditions.length ? normalizedGateInConditions : ["GOOD"]),
       gateOutConditionOther: selectedBooking.gateOutConditionOther || selectedBooking.gateInConditionOther || "",
@@ -644,12 +753,7 @@ const AdminBookingModule = ({ mode }) => {
       inDate: toDateTimeLocalString(getBookingInDate(selectedBooking)),
       outDate: toDateTimeLocalString(selectedBooking.outDate),
     })
-    setOverstayPolicy({
-      waive: Boolean(selectedBooking.overstayFeeWaived),
-      reason: selectedBooking.overstayFeeWaiverReason || "",
-    })
-
-  }, [selectedBooking?.id, selectedBooking?.inDate, selectedBooking?.outDate, selectedBooking?.overstayFeeWaived, selectedBooking?.overstayFeeWaiverReason])
+  }, [selectedBooking?.id, selectedBooking?.updatedAt, selectedBooking?.inDate, selectedBooking?.outDate, selectedBooking?.overstayFeeWaived, selectedBooking?.overstayFeeWaiverReason])
 
   useEffect(() => {
     if (!cashBooking) return
@@ -695,7 +799,7 @@ const AdminBookingModule = ({ mode }) => {
   const shouldRefreshForRealtimeEvent = useCallback((eventType) => {
     if (!eventType) return false
     if (isPreAdviceApprovalMode) return eventType.startsWith("booking:") || eventType.startsWith("preAdvice:") || eventType.startsWith("yard:")
-    if (config.primarySection === "gateIn") return eventType.startsWith("gateIn:") || eventType === "booking:gate_in_approved" || eventType === "booking:gate_in_no_show_cancelled" || eventType === "booking:approved" || eventType === "booking:rejected"
+    if (config.primarySection === "gateIn") return eventType.startsWith("gateIn:") || eventType === "booking:gate_in_details_updated" || eventType === "booking:gate_in_approved" || eventType === "booking:gate_in_no_show_cancelled" || eventType === "booking:approved" || eventType === "booking:rejected"
     if (config.primarySection === "billing") return eventType.includes("payment_") || eventType === "booking:billing_operation_updated" || eventType === "booking:overstay_billing_recomputed" || eventType === "booking:gate_out_requested"
     if (config.primarySection === "gateOut") return eventType.includes("gate_out") || eventType.includes("overstay_fee") || eventType === "booking:payment_approved" || eventType === "booking:cash_payment_recorded"
     if (config.primarySection === "release") return eventType.includes("gate_out_reversal") || eventType.includes("overstay_fee") || eventType === "booking:gate_out_approved" || eventType === "booking:overstay_billing_recomputed" || eventType === "booking:payment_approved" || eventType === "booking:cash_payment_recorded" || eventType === "booking:completed"
@@ -762,6 +866,40 @@ const AdminBookingModule = ({ mode }) => {
     isPreAdviceApprovalMode ? "Pre-advice rejected." : "Booking rejected."
   )
 
+  const saveGateInDetails = async () => {
+    if (!selectedBooking || user?.role !== "super_admin") return
+    if (!gateInDetails.inDate) {
+      setAlert({ type: "error", message: "Select the Gate-In date and time before saving." })
+      return
+    }
+
+    const parsedInDate = new Date(gateInDetails.inDate)
+    if (Number.isNaN(parsedInDate.getTime())) {
+      setAlert({ type: "error", message: "Select a valid Gate-In date and time." })
+      return
+    }
+
+    const saved = await runAction(
+      () => api.patch(`/admin/bookings/${selectedBooking.id}/gate-in/details`, {
+        ...gateInDetails,
+        containerSize: Number(gateInDetails.containerSize),
+        weight: Number(gateInDetails.weight),
+        inDate: parsedInDate.toISOString(),
+      }),
+      "Gate-In booking details updated successfully.",
+    )
+
+    if (saved) {
+      setGateIn((current) => ({
+        ...current,
+        actualContainerNumber: gateInDetails.containerNumber,
+        truckPlateNumber: gateInDetails.truckPlateNumber,
+        driverName: gateInDetails.driverName,
+        driverLicenseNumber: gateInDetails.driverLicenseNumber,
+      }))
+    }
+  }
+
   const approveGateIn = () => runAction(
     () => api.patch(`/admin/bookings/${selectedBooking.id}/gate-in`, {
       ...gateIn,
@@ -815,11 +953,27 @@ const AdminBookingModule = ({ mode }) => {
     setCashAdditionalItems((current) => current.filter((_, itemIndex) => itemIndex !== index))
   }
 
-  const openCashPayment = (booking) => {
+  const openCashPayment = async (booking) => {
     const disabledReason = getCashPaymentDisabledReason(booking)
     if (disabledReason) return
 
-    setCashBookingId(booking.id)
+    try {
+      // Fetch the latest server-side billing snapshot before opening the modal.
+      // This is important for Gate-Out because storage is calculated for the
+      // separate Gate-Out transaction and the list row may still contain the
+      // earlier Gate-In LOLO billing snapshot.
+      const { data } = await api.get(`/admin/bookings/${booking.id}`)
+      const freshBooking = data?.booking || data?.data || data
+      if (freshBooking?.id) {
+        setBookings((current) => current.map((item) => item.id === freshBooking.id ? freshBooking : item))
+        setCashBookingId(freshBooking.id)
+      } else {
+        setCashBookingId(booking.id)
+      }
+    } catch (error) {
+      setAlert({ type: "error", message: getApiError(error) })
+      return
+    }
     setShowCashModal(true)
   }
 
@@ -899,6 +1053,51 @@ const AdminBookingModule = ({ mode }) => {
     "Payment rejected."
   )
 
+  const openPaymentAdjustment = (payment) => {
+    if (!selectedBooking || user?.role !== "super_admin" || !payment?.id) return
+    setPaymentAdjustment({
+      transactionId: payment.id,
+      paymentStage: payment.paymentStage === "gate_out" ? "gate_out" : "gate_in",
+      amount: String(Number(payment.amount || 0)),
+      previousAmount: Number(payment.amount || 0),
+      referenceNumber: payment.referenceNumber || "",
+      reason: "",
+    })
+    setShowPaymentAdjustmentModal(true)
+  }
+
+  const closePaymentAdjustment = () => {
+    if (saving) return
+    setShowPaymentAdjustmentModal(false)
+    setPaymentAdjustment({ transactionId: "", paymentStage: "gate_in", amount: "", previousAmount: 0, referenceNumber: "", reason: "" })
+  }
+
+  const savePaymentAdjustment = async () => {
+    if (!selectedBooking || user?.role !== "super_admin" || !paymentAdjustment.transactionId) return
+    const amount = Number(paymentAdjustment.amount)
+    if (!Number.isFinite(amount) || amount < 0) {
+      setAlert({ type: "error", message: "Enter a valid payment amount of zero or greater." })
+      return
+    }
+
+    setAlert({ type: "", message: "" })
+    try {
+      setSaving(true)
+      const { data } = await api.patch(`/admin/bookings/${selectedBooking.id}/payments/${paymentAdjustment.transactionId}/amount`, {
+        amount,
+        paymentStage: paymentAdjustment.paymentStage,
+        reason: paymentAdjustment.reason.trim(),
+      })
+      setAlert({ type: "success", message: data.message || "Payment amount updated successfully." })
+      setShowPaymentAdjustmentModal(false)
+      await loadBookings({ force: true })
+    } catch (error) {
+      setAlert({ type: "error", message: getApiError(error) })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const approveGateOut = () => runAction(
     () => api.patch(`/admin/bookings/${selectedBooking.id}/gate-out/approve`, { remarks }),
     "Gate-Out approved."
@@ -937,29 +1136,6 @@ const AdminBookingModule = ({ mode }) => {
     }
   }
 
-  const saveOverstayPolicy = async () => {
-    if (!selectedBooking || user?.role !== "super_admin") return
-    if (overstayPolicy.waive && !overstayPolicy.reason.trim()) {
-      setAlert({ type: "error", message: "Enter a reason before waiving the overstay fee." })
-      return
-    }
-    setAlert({ type: "", message: "" })
-    try {
-      setSaving(true)
-      const { data } = await api.patch(`/admin/bookings/${selectedBooking.id}/gate-out/overstay-fee`, {
-        waive: overstayPolicy.waive,
-        reason: overstayPolicy.reason.trim(),
-      })
-      setOverstayPreview(data.preview || null)
-      setAlert({ type: "success", message: data.message || "Overstay fee policy updated." })
-      await loadBookings({ force: true })
-    } catch (error) {
-      setAlert({ type: "error", message: getApiError(error) })
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const approveGateOutReversal = () => runAction(
     () => api.patch(`/admin/bookings/${selectedBooking.id}/gate-out/reversal/approve`, { remarks }),
     "Gate-Out reversed. Container returned to storage and approved payment preserved as credit."
@@ -969,39 +1145,6 @@ const AdminBookingModule = ({ mode }) => {
     () => api.patch(`/admin/bookings/${selectedBooking.id}/gate-out/reversal/reject`, { reason: reversalRejectReason }),
     "Gate-Out reversal request rejected."
   )
-
-  const previewOverstayBilling = async () => {
-    if (!selectedBooking) return
-    setAlert({ type: "", message: "" })
-    try {
-      setOverstayPreviewLoading(true)
-      const { data } = await api.get(`/admin/bookings/${selectedBooking.id}/gate-out/billing-preview`)
-      setOverstayPreview(data.preview || null)
-      if (!data.preview?.isOverstaying) {
-        setAlert({ type: "info", message: data.message || "The container is still within its approved release window." })
-      }
-    } catch (error) {
-      setAlert({ type: "error", message: getApiError(error) })
-    } finally {
-      setOverstayPreviewLoading(false)
-    }
-  }
-
-  const recomputeOverstayBilling = async () => {
-    if (!selectedBooking) return
-    setAlert({ type: "", message: "" })
-    try {
-      setSaving(true)
-      const { data } = await api.patch(`/admin/bookings/${selectedBooking.id}/gate-out/recompute-billing`)
-      setOverstayPreview(data.preview || null)
-      setAlert({ type: "success", message: data.message || "Overstay billing recomputed using the current server time." })
-      await loadBookings({ force: true })
-    } catch (error) {
-      setAlert({ type: "error", message: getApiError(error) })
-    } finally {
-      setSaving(false)
-    }
-  }
 
   const completeGateOut = async () => {
     const completed = await runAction(
@@ -1284,6 +1427,7 @@ const AdminBookingModule = ({ mode }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
+              {loading && bookings.length === 0 && <TableLoadingRow colSpan={6} rows={7} actionColumn label="Loading booking records" />}
               {pagination.paginatedItems.map((booking) => (
                 <tr key={booking.id} className="align-top hover:bg-slate-50/70">
                   <td className="px-4 py-4">
@@ -1309,7 +1453,16 @@ const AdminBookingModule = ({ mode }) => {
                     )}
                   </td>
                   <td className="px-4 py-4">
-                    {booking.status === "approved_area_assigned" && booking.loloPaymentStage === "gate_out" ? (
+                    {config.primarySection === "release" ? (
+                      <>
+                        <div className="space-y-1 text-xs font-bold text-slate-600">
+                          <p>Gate-In Total: <span className="font-black text-slate-900">PHP {Number(booking.gateInBillingTotal || booking.gateInPaymentTotal || 0).toLocaleString()}</span></p>
+                          <p>Gate-Out Total: <span className="font-black text-slate-900">PHP {Number(booking.gateOutBillingTotal ?? booking.billingTotal ?? 0).toLocaleString()}</span></p>
+                          <p className="border-t border-slate-200 pt-1">Total Billing: <span className="font-black text-emerald-700">PHP {Number(booking.totalBillingAmount ?? ((Number(booking.gateInBillingTotal || booking.gateInPaymentTotal) || 0) + (Number(booking.gateOutBillingTotal ?? booking.billingTotal) || 0))).toLocaleString()}</span></p>
+                        </div>
+                        <span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass(booking.billingStatus)}`}>{billingLabels[booking.billingStatus] || booking.billingStatus}</span>
+                      </>
+                    ) : booking.status === "approved_area_assigned" && booking.loloPaymentStage === "gate_out" ? (
                       <>
                         <p className="font-black text-blue-700">Deferred to Gate-Out</p>
                         <span className="mt-2 inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">No Gate-In payment</span>
@@ -1435,6 +1588,13 @@ const AdminBookingModule = ({ mode }) => {
             {selectedModalMode === "view" && (
               <>
                 <BookingModuleViewSummary booking={selectedBooking} section={config.primarySection} />
+                {user?.role === "super_admin" && ["gateIn", "gateOut"].includes(config.primarySection) && (
+                  <StagePaymentAdjustment
+                    booking={selectedBooking}
+                    stage={config.primarySection === "gateIn" ? "gate_in" : "gate_out"}
+                    onEdit={openPaymentAdjustment}
+                  />
+                )}
                 {config.primarySection === "billing" && (
                   <WorkflowDecisionPanel
                     icon={CreditCard}
@@ -1654,6 +1814,91 @@ const AdminBookingModule = ({ mode }) => {
                   </button>
                 )}
               >
+                {user?.role === "super_admin" && selectedBooking.status === "approved_area_assigned" && (
+                  <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div className="flex flex-col gap-3 border-b border-emerald-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Super Admin Editable Gate-In Details</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-600">Update the approved booking details before Gate-In. Size, classification, Gate-In schedule, truck and shipping details can all be corrected here.</p>
+                      </div>
+                      <button type="button" className="btn-primary shrink-0" onClick={saveGateInDetails} disabled={saving}>
+                        <CheckCircle2 size={16} /> Save Gate-In Details
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                      <Field label="Container Number">
+                        <input className="input uppercase" value={gateInDetails.containerNumber} onChange={(event) => setGateInDetails((current) => ({ ...current, containerNumber: event.target.value.toUpperCase() }))} />
+                      </Field>
+                      <Field label="Container Size">
+                        <select className="input" value={gateInDetails.containerSize} onChange={(event) => setGateInDetails((current) => ({ ...current, containerSize: event.target.value }))}>
+                          <option value="20">20 ft</option>
+                          <option value="40">40 ft</option>
+                        </select>
+                      </Field>
+                      <Field label="Local / International">
+                        <select className="input" value={gateInDetails.rateType} onChange={(event) => setGateInDetails((current) => ({ ...current, rateType: event.target.value }))}>
+                          <option value="local">Local</option>
+                          <option value="international">International</option>
+                        </select>
+                      </Field>
+                      <Field label="Gate-In Date / Time" hint="Gate-In capacity remains limited to 4 containers per hour.">
+                        <input type="datetime-local" step="3600" className="input" value={gateInDetails.inDate} onChange={(event) => setGateInDetails((current) => ({ ...current, inDate: event.target.value }))} />
+                      </Field>
+                      <Field label="Container Type">
+                        <select className="input" value={gateInDetails.containerType} onChange={(event) => setGateInDetails((current) => ({ ...current, containerType: event.target.value }))}>
+                          <option value="dry">Dry</option>
+                          <option value="reefer">Reefer</option>
+                          <option value="tank">Tank</option>
+                          <option value="open_top">Open Top</option>
+                          <option value="flat_rack">Flat Rack</option>
+                        </select>
+                      </Field>
+                      <Field label="Load Status">
+                        <select className="input" value={gateInDetails.containerLoadStatus} onChange={(event) => setGateInDetails((current) => ({ ...current, containerLoadStatus: event.target.value }))}>
+                          <option value="empty">Empty</option>
+                          <option value="laden">Laden</option>
+                        </select>
+                      </Field>
+                      <Field label="Weight">
+                        <input type="number" min="0.01" step="0.01" className="input" value={gateInDetails.weight} onChange={(event) => setGateInDetails((current) => ({ ...current, weight: event.target.value }))} />
+                      </Field>
+                      <Field label="Shipping Line">
+                        <input className="input" value={gateInDetails.shippingLine} onChange={(event) => setGateInDetails((current) => ({ ...current, shippingLine: event.target.value }))} />
+                      </Field>
+                      <Field label="Booking Number">
+                        <input className="input" value={gateInDetails.bookingNumber} onChange={(event) => setGateInDetails((current) => ({ ...current, bookingNumber: event.target.value }))} />
+                      </Field>
+                      <Field label="BL Number">
+                        <input className="input" value={gateInDetails.blNumber} onChange={(event) => setGateInDetails((current) => ({ ...current, blNumber: event.target.value }))} />
+                      </Field>
+                      <Field label="Vessel / Voyage">
+                        <input className="input" value={gateInDetails.vesselVoyage} onChange={(event) => setGateInDetails((current) => ({ ...current, vesselVoyage: event.target.value }))} />
+                      </Field>
+                      <Field label="Truck Plate">
+                        <input className="input uppercase" value={gateInDetails.truckPlateNumber} onChange={(event) => setGateInDetails((current) => ({ ...current, truckPlateNumber: event.target.value.toUpperCase() }))} />
+                      </Field>
+                      <Field label="Driver Name">
+                        <input className="input" value={gateInDetails.driverName} onChange={(event) => setGateInDetails((current) => ({ ...current, driverName: event.target.value }))} />
+                      </Field>
+                      <Field label="Driver License">
+                        <input className="input" value={gateInDetails.driverLicenseNumber} onChange={(event) => setGateInDetails((current) => ({ ...current, driverLicenseNumber: event.target.value }))} />
+                      </Field>
+                      <Field label="Hauler">
+                        <input className="input" value={gateInDetails.hauler} onChange={(event) => setGateInDetails((current) => ({ ...current, hauler: event.target.value }))} />
+                      </Field>
+                    </div>
+                    <div className="mt-4 grid gap-4 md:grid-cols-2">
+                      <Field label="Cargo Description">
+                        <textarea className="input min-h-[82px]" value={gateInDetails.cargoDescription} onChange={(event) => setGateInDetails((current) => ({ ...current, cargoDescription: event.target.value }))} />
+                      </Field>
+                      <Field label="Client Remarks">
+                        <textarea className="input min-h-[82px]" value={gateInDetails.clientRemarks} onChange={(event) => setGateInDetails((current) => ({ ...current, clientRemarks: event.target.value }))} />
+                      </Field>
+                    </div>
+                  </div>
+                )}
+
                 {selectedBooking.loloPaymentStage === "gate_out" ? (
                   <div className="rounded-3xl border border-blue-200 bg-blue-50 p-4">
                     <p className="text-xs font-black uppercase tracking-wide text-blue-700">LOLO Payment Deferred to Gate-Out</p>
@@ -1718,11 +1963,19 @@ const AdminBookingModule = ({ mode }) => {
                     onOtherChange={(value) => setGateIn((current) => ({ ...current, gateInConditionOther: value }))}
                   />
                 </Field>
-                <div className="mt-4 grid gap-3 rounded-3xl bg-slate-50 p-4 text-sm md:grid-cols-4">
-                  <div><span className="font-black text-slate-500">Truck Plate:</span> {selectedBooking.truckPlateNumber || "-"}</div>
-                  <div><span className="font-black text-slate-500">Driver:</span> {selectedBooking.driverName || "-"}</div>
-                  <div><span className="font-black text-slate-500">Driver License:</span> {selectedBooking.driverLicenseNumber || "-"}</div>
-                  <div><span className="font-black text-slate-500">Hauler:</span> {selectedBooking.hauler || "-"}</div>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  <Field label="Truck Plate">
+                    <input className="input uppercase" value={gateIn.truckPlateNumber} onChange={(event) => setGateIn((current) => ({ ...current, truckPlateNumber: event.target.value.toUpperCase() }))} />
+                  </Field>
+                  <Field label="Driver Name">
+                    <input className="input" value={gateIn.driverName} onChange={(event) => setGateIn((current) => ({ ...current, driverName: event.target.value }))} />
+                  </Field>
+                  <Field label="Driver License">
+                    <input className="input" value={gateIn.driverLicenseNumber} onChange={(event) => setGateIn((current) => ({ ...current, driverLicenseNumber: event.target.value }))} />
+                  </Field>
+                  <Field label="Hauler">
+                    <input className="input" value={selectedBooking.hauler || gateInDetails.hauler || ""} readOnly />
+                  </Field>
                 </div>
                 <Field label="Inspection Remarks">
                   <textarea className="input mt-4 min-h-[82px]" value={gateIn.inspectionRemarks} onChange={(event) => setGateIn((current) => ({ ...current, inspectionRemarks: event.target.value }))} />
@@ -1862,7 +2115,7 @@ const AdminBookingModule = ({ mode }) => {
                 approveIcon={Truck}
                 onApprove={config.primarySection === "release" ? completeGateOut : approveGateOut}
                 approveDisabled={saving || (config.primarySection === "release"
-                  ? selectedBooking.status !== "gate_out_approved" || Boolean(selectedBooking.releasedAt) || selectedBooking.billingStatus !== "paid_approved"
+                  ? selectedBooking.status !== "gate_out_approved" || Boolean(selectedBooking.releasedAt)
                   : selectedBooking.status !== "gate_out_requested" || !hasApprovedPayment(selectedBooking))}
                 rejectLabel={config.primarySection === "gateOut" ? "Reject Gate-Out" : undefined}
                 rejectReason={gateOutRejectReason}
@@ -1880,9 +2133,9 @@ const AdminBookingModule = ({ mode }) => {
                   <div><span className="font-black text-slate-500">Scheduled Gate-Out:</span> {formatDate(selectedBooking.outDate)}</div>
                   <div><span className="font-black text-slate-500">Approved:</span> {formatDate(selectedBooking.gateOutApprovedAt)}</div>
                   <div><span className="font-black text-slate-500">Released:</span> {formatDate(selectedBooking.releasedAt)}</div>
-                  <div><span className="font-black text-slate-500">Billing Gate:</span> {selectedBooking.billingStatus === "paid_approved" ? "Ready" : "Payment not approved"}</div>
-                  <div><span className="font-black text-slate-500">Approved Payment Credit:</span> PHP {Number(selectedBooking.approvedPaymentAmount || 0).toLocaleString()}</div>
-                  <div><span className="font-black text-slate-500">Balance Due:</span> PHP {Number(selectedBooking.paymentBalanceDue ?? selectedBooking.paymentAmount ?? 0).toLocaleString()}</div>
+                  <div><span className="font-black text-slate-500">Billing Gate:</span> {config.primarySection === "release" ? "Cleared at Gate-Out approval" : (selectedBooking.billingStatus === "paid_approved" ? "Ready" : "Payment not approved")}</div>
+                  <div><span className="font-black text-slate-500">Gate-In LOLO Payment:</span> {Number(selectedBooking.gateInPaymentTotal || 0) > 0 ? `PHP ${Number(selectedBooking.gateInPaymentTotal).toLocaleString()} (separate transaction)` : "None"}</div>
+                  <div><span className="font-black text-slate-500">Gate-Out Balance Due:</span> {config.primarySection === "release" ? "PHP 0 (payment locked)" : `PHP ${Number(selectedBooking.paymentBalanceDue ?? selectedBooking.paymentAmount ?? selectedBooking.billingTotal ?? 0).toLocaleString()}`}</div>
                   <div><span className="font-black text-slate-500">Release Window:</span> {selectedBooking.isOverstaying ? "Overstaying" : "Awaiting release"}</div>
                 </div>
 
@@ -1925,92 +2178,14 @@ const AdminBookingModule = ({ mode }) => {
                   </div>
                 )}
 
-                {config.primarySection === "release" && selectedBooking.isOverstaying && (
-                  <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <p className="font-black uppercase tracking-wide text-red-700">Overstaying Container</p>
-                        <p className="mt-1 font-semibold leading-6">
-                          The approved Gate-Out schedule and {Number(selectedBooking.gateOutGracePeriodMinutes || 0)}-minute grace period have passed. The yard slot remains occupied. {selectedBooking.overstayFeeWaived ? "Super Admin waived the overstay fee, so billing is capped at the scheduled Gate-Out time." : "Overstay billing continues until physical release."}
-                        </p>
-                        <p className="mt-2 text-xs font-bold text-red-700">Overstay started: {formatDate(selectedBooking.gateOutOverstayStartedAt)}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={previewOverstayBilling}
-                        disabled={overstayPreviewLoading || saving}
-                        className="btn-secondary shrink-0"
-                      >
-                        <RefreshCw size={16} className={overstayPreviewLoading ? "animate-spin" : ""} />
-                        Preview Current Billing
-                      </button>
-                    </div>
-
-                    {user?.role === "super_admin" ? (
-                      <div className="mt-4 rounded-2xl border border-violet-200 bg-white p-4 text-slate-800">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-xs font-black uppercase tracking-wide text-violet-700">Super Admin Overstay Fee Policy</p>
-                            <p className="mt-1 text-xs font-semibold text-slate-500">Choose if overstay charges should continue or be waived for this container.</p>
-                          </div>
-                          {selectedBooking.overstayFeeWaived && <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-700">Fee Waived</span>}
-                        </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          <label className={`cursor-pointer rounded-xl border p-3 ${!overstayPolicy.waive ? "border-red-300 bg-red-50" : "border-slate-200"}`}>
-                            <input type="radio" className="mr-2" checked={!overstayPolicy.waive} onChange={() => setOverstayPolicy((current) => ({ ...current, waive: false }))} />
-                            <strong>Apply overstay charges</strong>
-                          </label>
-                          <label className={`cursor-pointer rounded-xl border p-3 ${overstayPolicy.waive ? "border-emerald-300 bg-emerald-50" : "border-slate-200"}`}>
-                            <input type="radio" className="mr-2" checked={overstayPolicy.waive} onChange={() => setOverstayPolicy((current) => ({ ...current, waive: true }))} />
-                            <strong>Waive overstay charges</strong>
-                          </label>
-                        </div>
-                        {overstayPolicy.waive && (
-                          <Field label="Waiver Reason" hint="Required for the audit trail.">
-                            <textarea className="input mt-3 min-h-[72px] bg-white" value={overstayPolicy.reason} onChange={(event) => setOverstayPolicy((current) => ({ ...current, reason: event.target.value }))} placeholder="Reason for waiving the overstay fee" maxLength={500} />
-                          </Field>
-                        )}
-                        <div className="mt-3 flex justify-end">
-                          <button type="button" onClick={saveOverstayPolicy} className="btn-primary" disabled={saving || (overstayPolicy.waive && !overstayPolicy.reason.trim())}>
-                            <CheckCircle2 size={16} /> Save Fee Policy
-                          </button>
-                        </div>
-                      </div>
-                    ) : selectedBooking.overstayFeeWaived ? (
-                      <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
-                        Overstay fee waived by {selectedBooking.overstayFeeWaivedByName || "Super Admin"}. {selectedBooking.overstayFeeWaiverReason ? `Reason: ${selectedBooking.overstayFeeWaiverReason}` : ""}
-                      </div>
-                    ) : null}
-
-                    {overstayPreview && (
-                      <div className="mt-4 rounded-2xl border border-red-200 bg-white p-4">
-                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                          <div><p className="text-xs font-black uppercase text-slate-400">Billing Time Basis</p><p className="mt-1 font-bold text-slate-800">{formatDate(overstayPreview.billingAsOf || overstayPreview.serverTime)}</p></div>
-                          <div><p className="text-xs font-black uppercase text-slate-400">Previous Gross Bill</p><p className="mt-1 font-bold text-slate-800">PHP {Number(overstayPreview.previousTotal || 0).toLocaleString()}</p></div>
-                          <div><p className="text-xs font-black uppercase text-slate-400">Recomputed Gross Bill</p><p className="mt-1 font-black text-red-700">PHP {Number(overstayPreview.recomputedTotal || 0).toLocaleString()}</p></div>
-                          <div><p className="text-xs font-black uppercase text-slate-400">Additional Charges</p><p className="mt-1 font-bold text-amber-700">PHP {Number(overstayPreview.additionalAmount || 0).toLocaleString()}</p></div>
-                          <div><p className="text-xs font-black uppercase text-slate-400">Approved Credit</p><p className="mt-1 font-bold text-emerald-700">PHP {Number(overstayPreview.approvedPaymentCredit || 0).toLocaleString()}</p></div>
-                          <div><p className="text-xs font-black uppercase text-slate-400">Balance Due</p><p className="mt-1 font-black text-red-700">PHP {Number(overstayPreview.balanceDue || 0).toLocaleString()}</p></div>
-                        </div>
-                        <div className="mt-4 flex flex-wrap justify-end gap-2">
-                          {Number(overstayPreview.balanceDue || 0) > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => openCashPayment(selectedBooking)}
-                              disabled={saving || Boolean(getCashPaymentDisabledReason(selectedBooking))}
-                              className="btn-secondary"
-                              title={getCashPaymentDisabledReason(selectedBooking) || "Record supplemental cash payment"}
-                            >
-                              <Banknote size={16} />
-                              Record Cash Payment
-                            </button>
-                          )}
-                          <button type="button" onClick={recomputeOverstayBilling} disabled={saving || !overstayPreview.isOverstaying || overstayPreview.overstayFeeWaived} className="btn-primary">
-                            <RefreshCw size={16} className={saving ? "animate-spin" : ""} />
-                            {overstayPreview.overstayFeeWaived ? "Fee Waived" : "Apply Recomputed Billing"}
-                          </button>
-                        </div>
-                      </div>
+                {config.primarySection === "release" && (
+                  <div className={`rounded-3xl border p-4 text-sm ${selectedBooking.isOverstaying ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}>
+                    <p className="font-black uppercase tracking-wide">Gate-Out Payment Locked</p>
+                    <p className="mt-1 font-semibold leading-6">
+                      The Gate-Out payment was already paid and approved before this container reached Release Container. Completing the physical release will use that approved payment and will not recalculate or request an additional payment.
+                    </p>
+                    {selectedBooking.isOverstaying && (
+                      <p className="mt-2 text-xs font-bold">The container is past its scheduled release window, but this release step does not generate supplemental Gate-Out charges.</p>
                     )}
                   </div>
                 )}
@@ -2041,6 +2216,67 @@ const AdminBookingModule = ({ mode }) => {
               </WorkflowDecisionPanel>
             )}
               </>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPaymentAdjustmentModal && selectedBooking && (
+        <div className="fixed inset-0 z-[95] grid place-items-center bg-slate-950/65 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-violet-700">Super Admin Editable Pay</p>
+                <h2 className="mt-1 text-2xl font-black text-slate-950">Edit {paymentAdjustment.paymentStage === "gate_in" ? "Gate-In" : "Gate-Out"} Payment</h2>
+                <p className="mt-1 text-sm font-semibold text-slate-500">{selectedBooking.bookingReference} • {selectedBooking.containerNumber}</p>
+              </div>
+              <ModalCloseButton onClick={closePaymentAdjustment} label="Close payment adjustment" />
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="text-xs font-black uppercase tracking-wide text-slate-400">Current Pay</p>
+                <p className="mt-1 text-xl font-black text-slate-900">PHP {Number(paymentAdjustment.previousAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="text-xs font-black uppercase tracking-wide text-slate-400">Reference</p>
+                <p className="mt-1 break-all text-sm font-black text-slate-900">{paymentAdjustment.referenceNumber || "No reference"}</p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <Field label="New Pay Amount" hint="This changes the approved payment amount only. Billing charges and rates are not changed.">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="input"
+                  value={paymentAdjustment.amount}
+                  onChange={(event) => setPaymentAdjustment((current) => ({ ...current, amount: event.target.value }))}
+                  placeholder="0.00"
+                  autoFocus
+                />
+              </Field>
+              <Field label="Adjustment Note" hint="Optional. This will be recorded in the booking history and admin audit log.">
+                <textarea
+                  className="input min-h-[90px]"
+                  value={paymentAdjustment.reason}
+                  onChange={(event) => setPaymentAdjustment((current) => ({ ...current, reason: event.target.value }))}
+                  placeholder="Why is the payment amount being corrected?"
+                  maxLength={500}
+                />
+              </Field>
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold leading-5 text-amber-800">
+              If the new payment is lower than the {paymentAdjustment.paymentStage === "gate_in" ? "Gate-In" : "Gate-Out"} bill, the remaining balance will become payable again. If the container has already been released, Revenue and the Release Report are updated to the corrected paid amount.
+            </div>
+
+            <div className="mt-5 flex justify-end gap-3">
+              <button type="button" onClick={closePaymentAdjustment} className="btn-secondary" disabled={saving}>Cancel</button>
+              <button type="button" onClick={savePaymentAdjustment} className="btn-primary" disabled={saving || paymentAdjustment.amount === "" || Number(paymentAdjustment.amount) < 0}>
+                <Pencil size={16} /> {saving ? "Saving..." : "Save Pay Amount"}
+              </button>
             </div>
           </div>
         </div>
@@ -2114,6 +2350,17 @@ const AdminBookingModule = ({ mode }) => {
               </div>
             )}
 
+            {cashPaymentStage === "gate_out" && cashGateInPayment > 0 && (
+              <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Gate-In Payment Details</p>
+                <p className="mt-1 text-sm font-semibold text-emerald-900">LOLO payment was collected during Gate-In and remains a separate Gate-In transaction.</p>
+                <div className="mt-3 flex items-center justify-between border-t border-emerald-200 pt-3 text-sm">
+                  <span className="font-bold text-emerald-800">Gate-In LOLO Payment</span>
+                  <strong className="text-emerald-900">PHP {cashGateInPayment.toLocaleString()}</strong>
+                </div>
+              </div>
+            )}
+
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className={`cursor-pointer rounded-2xl border p-4 ${cashPayment.isVatApplicable ? "border-emerald-400 bg-emerald-50" : "border-slate-200"}`}><input type="radio" className="mr-2" checked={cashPayment.isVatApplicable} onChange={() => setCashPayment((current) => ({ ...current, isVatApplicable: true }))} /><strong>VAT</strong><p className="mt-1 text-xs text-slate-500">Generate Official Receipt</p></label>
               <label className={`cursor-pointer rounded-2xl border p-4 ${!cashPayment.isVatApplicable ? "border-amber-400 bg-amber-50" : "border-slate-200"}`}><input type="radio" className="mr-2" checked={!cashPayment.isVatApplicable} onChange={() => setCashPayment((current) => ({ ...current, isVatApplicable: false }))} /><strong>Non-VAT</strong><p className="mt-1 text-xs text-slate-500">Generate Acknowledgement Receipt</p></label>
@@ -2125,8 +2372,13 @@ const AdminBookingModule = ({ mode }) => {
               <div className="mt-2 flex justify-between border-t border-white/10 pt-2 text-sm"><span>Subtotal</span><strong>PHP {cashSubtotal.toLocaleString()}</strong></div>
               <div className="mt-2 flex justify-between text-sm"><span>VAT {cashPayment.isVatApplicable ? `(${cashVatRate * 100}%)` : "(Non-VAT)"}</span><strong>PHP {cashVatAmount.toLocaleString()}</strong></div>
               <div className="mt-3 flex justify-between border-t border-white/20 pt-3 text-sm"><span>Gross Total</span><strong>PHP {cashGrossTotal.toLocaleString()}</strong></div>
-              {cashApprovedCredit > 0 && <div className="mt-2 flex justify-between text-sm text-emerald-200"><span>Approved Payment Credit</span><strong>- PHP {cashApprovedCredit.toLocaleString()}</strong></div>}
-              <div className="mt-3 flex justify-between border-t border-white/20 pt-3 text-xl"><span>Balance Due</span><strong>PHP {cashTotal.toLocaleString()}</strong></div>
+              {cashPaymentStage === "gate_in" && cashApprovedCredit > 0 && <div className="mt-2 flex justify-between text-sm text-emerald-200"><span>Approved Gate-In Payment</span><strong>PHP {cashApprovedCredit.toLocaleString()}</strong></div>}
+              {cashPaymentStage === "gate_out" && cashGateOutPayment > 0 && <div className="mt-2 flex justify-between text-sm text-amber-200"><span>Approved Gate-Out Payment</span><strong>- PHP {cashGateOutPayment.toLocaleString()}</strong></div>}
+              {cashPaymentStage === "gate_out" && cashGateInPayment > 0 && (<>
+                <div className="mt-2 flex justify-between text-sm text-emerald-200"><span>Gate-In LOLO Payment (Already Paid)</span><strong>PHP {cashGateInPayment.toLocaleString()}</strong></div>
+                <div className="mt-2 text-xs text-emerald-200">This Gate-In payment is shown for payment history only. It is not deducted from the Gate-Out transaction.</div>
+              </>)}
+              <div className="mt-3 flex justify-between border-t border-white/20 pt-3 text-xl"><span>Total Balance to Pay</span><strong>PHP {cashTotal.toLocaleString()}</strong></div>
             </div>
 
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -2213,6 +2465,8 @@ const BookingModuleViewSummary = ({ booking, section }) => {
               </div>
             </div>
           )}
+          <PaymentHistoryBreakdown booking={booking} className="sm:col-span-2 lg:col-span-3" />
+
           {(booking.paymentProofs || []).length > 0 && (
             <div className="mt-4 flex flex-wrap gap-2">
               {(booking.paymentProofs || []).map((document, index) => (
@@ -2232,7 +2486,9 @@ const BookingModuleViewSummary = ({ booking, section }) => {
           <Detail label="Reversal Requested" value={formatDate(booking.gateOutReversalRequestedAt)} />
           <Detail label="Reversal Reason" value={booking.gateOutReversalRequestReason} />
           <Detail label="Reversal Decision" value={booking.gateOutReversalDecision} />
-          <Detail label="Approved Payment Credit" value={`PHP ${Number(booking.approvedPaymentAmount || 0).toLocaleString()}`} />
+          <Detail label="Gate-In LOLO Payment (Separate)" value={Number(booking.gateInPaymentTotal || 0) > 0 ? `PHP ${Number(booking.gateInPaymentTotal).toLocaleString()}` : "None"} />
+          <Detail label="Gate-Out Billing" value={`PHP ${Number(booking.gateOutBillingTotal ?? booking.billingTotal ?? 0).toLocaleString()}`} />
+          <Detail label="Total Billing (Gate-In + Gate-Out)" value={`PHP ${Number(booking.totalBillingAmount ?? ((Number(booking.gateInPaymentTotal) || 0) + (Number(booking.gateOutBillingTotal ?? booking.billingTotal) || 0))).toLocaleString()}`} />
           <Detail label="Balance Due" value={`PHP ${Number(booking.paymentBalanceDue ?? booking.paymentAmount ?? 0).toLocaleString()}`} />
           <Detail label="Released" value={formatDate(booking.releasedAt)} />
           <Detail label="Receipt Number" value={booking.receiptNumber} />

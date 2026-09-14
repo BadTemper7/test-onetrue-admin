@@ -19,6 +19,7 @@ import {
   getPermissionsForRole,
   permissionModules,
 } from "../../lib/permissions"
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const modules = permissionModules.map(({ key }) => key)
 const moduleLabels = Object.fromEntries(permissionModules.map(({ key, label }) => [key, label]))
@@ -52,6 +53,7 @@ const AdminAccounts = () => {
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
+  const [listLoading, setListLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
@@ -105,10 +107,13 @@ const AdminAccounts = () => {
 
   const loadAdmins = async () => {
     try {
+      setListLoading(true)
       const { data } = await api.get("/admin/users?userType=admin")
       setUsers(data.users || [])
     } catch (err) {
       setError(getApiError(err))
+    } finally {
+      setListLoading(false)
     }
   }
 
@@ -450,6 +455,7 @@ const AdminAccounts = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
+              {listLoading && users.length === 0 && <TableLoadingRow colSpan={5} rows={6} actionColumn label="Loading dashboard accounts" />}
               {adminPagination.paginatedItems.map((user) => (
                 <tr key={user.id} className="hover:bg-slate-50/70">
                   <td className="px-4 py-4">
@@ -480,7 +486,7 @@ const AdminAccounts = () => {
                 </tr>
               ))}
 
-              {filteredUsers.length === 0 && (
+              {!listLoading && filteredUsers.length === 0 && (
                 <tr>
                   <td colSpan="5" className="px-4 py-10 text-center font-bold text-slate-500">
                     No dashboard accounts found.

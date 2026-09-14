@@ -7,6 +7,7 @@ import TableCrudActions from "../../components/ui/TableCrudActions";
 import WorkflowDecisionPanel from "../../components/ui/WorkflowDecisionPanel";
 import { usePagination } from "../../hooks/usePagination";
 import { useClickOutside } from "../../hooks/useClickOutside";
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const statusClass = (status) => {
   if (status === "verified" || status === "active") {
@@ -53,6 +54,7 @@ const AdminClients = () => {
   const [isEditingClient, setIsEditingClient] = useState(false);
   const [clientForm, setClientForm] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
 
 
   useClickOutside(filterRef, () => setShowFilters(false), showFilters);
@@ -104,10 +106,13 @@ const AdminClients = () => {
 
   const loadClients = async () => {
     try {
+      setListLoading(true);
       const { data } = await api.get("/admin/client-registrations");
       setClients(data.users || []);
     } catch (err) {
       setError(getApiError(err));
+    } finally {
+      setListLoading(false);
     }
   };
 
@@ -403,6 +408,7 @@ const AdminClients = () => {
             </thead>
 
             <tbody className="divide-y divide-slate-200">
+              {listLoading && clients.length === 0 && <TableLoadingRow colSpan={6} rows={6} actionColumn label="Loading client registrations" />}
               {clientPagination.paginatedItems.map((client) => (
                 <tr key={client.id} className="align-top hover:bg-slate-50/70">
                   <td className="px-4 py-4">
@@ -488,7 +494,7 @@ const AdminClients = () => {
                 </tr>
               ))}
 
-              {filteredClients.length === 0 && (
+              {!listLoading && filteredClients.length === 0 && (
                 <tr>
                   <td
                     colSpan="6"

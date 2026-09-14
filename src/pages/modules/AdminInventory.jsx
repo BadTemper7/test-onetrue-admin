@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Database, MapPin, PackageCheck, Plus, RefreshCw, Search, SlidersHorizontal, Upload, Warehouse } from "lucide-react"
+import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Database, LogOut, MapPin, PackageCheck, Plus, RefreshCw, Search, SlidersHorizontal, Upload, Warehouse } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
 import { api, getApiError, resolveFileUrl } from "../../lib/api"
 import Pagination from "../../components/ui/Pagination"
 import TableCrudActions from "../../components/ui/TableCrudActions"
 import TableActionButton from "../../components/ui/TableActionButton"
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 import WorkflowDecisionPanel from "../../components/ui/WorkflowDecisionPanel"
 import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
 import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
@@ -64,8 +65,6 @@ const formatDate = (value) => {
   return new Date(value).toLocaleString()
 }
 
-const getTeu = (size) => Number(size) === 40 ? 2 : 1
-const getFeu = (size) => Number(size) === 40 ? 1 : 0.5
 
 const getRequiredBlockCapacity = (containerSize, blockContainerSize) => {
   if (Number(blockContainerSize) === 20) return Number(containerSize) === 40 ? 2 : 1
@@ -656,10 +655,143 @@ const LegacyContainerModal = ({ open, areas, onClose, onCreated }) => {
   )
 }
 
+
+const toDateTimeLocalValue = (value) => {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  const pad = (number) => String(number).padStart(2, "0")
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+const getDefaultGateOutDateTime = () => {
+  const date = new Date(Date.now() + (2 * 24 * 60 * 60 * 1000))
+  date.setSeconds(0, 0)
+  if (date.getMinutes() > 0) date.setHours(date.getHours() + 1, 0, 0, 0)
+  return toDateTimeLocalValue(date)
+}
+
+const InventoryGateOutModal = ({ container, form, setForm, saving, onClose, onSubmit }) => {
+  if (!container) return null
+  const isRelease = container.bookingStatus === "gate_out_approved"
+  const toggleCondition = (condition) => {
+    setForm((current) => {
+      const exists = current.gateOutConditions.includes(condition)
+      return {
+        ...current,
+        gateOutConditions: exists
+          ? current.gateOutConditions.filter((item) => item !== condition)
+          : [...current.gateOutConditions, condition],
+      }
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-[9998] grid place-items-center bg-slate-950/[0.55] p-4 backdrop-blur-sm">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-[1.5rem] bg-white shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white p-5">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-700">
+              <LogOut size={14} /> {isRelease ? "Complete Gate Out" : "Gate Out from Inventory"}
+            </div>
+            <h2 className="mt-3 text-2xl font-black text-slate-950">{container.containerNumber}</h2>
+            <p className="mt-1 text-sm font-semibold text-slate-500">{container.bookingReference} • {container.clientName || "Client"}</p>
+            <ContainerClassificationBadges
+              loadStatus={container.containerLoadStatus || container.containerStatus}
+              rateType={container.rateType}
+              className="mt-3"
+            />
+          </div>
+          <ModalCloseButton onClick={onClose} label="Close Gate-Out form" />
+        </div>
+
+        <form onSubmit={onSubmit} className="space-y-5 p-5">
+          {isRelease ? (
+            <>
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold leading-6 text-emerald-900">
+                This container already has an approved Gate-Out and paid transaction. Completing Gate Out will physically release the container, free its yard slot, and generate the final release report.
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Detail label="Scheduled Gate Out" value={formatDate(container.outDate)} />
+                <Detail label="Billing Status" value={billingLabel[container.billingStatus] || container.billingStatus} />
+                <Detail label="Balance Due" value={`PHP ${Number(container.paymentBalanceDue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
+                <Detail label="Current Location" value={`${container.areaName || "-"} • ${getAreaSlotLabel(container)}`} />
+              </div>
+
+              <Field label="Gate-Out Container Condition">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {legacyConditionOptions.map((condition) => (
+                    <label key={condition} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={form.gateOutConditions.includes(condition)}
+                        onChange={() => toggleCondition(condition)}
+                        className="h-4 w-4 rounded text-emerald-600"
+                      />
+                      {condition}
+                    </label>
+                  ))}
+                </div>
+              </Field>
+
+              {form.gateOutConditions.includes("OTHER") && (
+                <Field label="Other Condition">
+                  <input
+                    className="input"
+                    value={form.gateOutConditionOther}
+                    onChange={(event) => setForm((current) => ({ ...current, gateOutConditionOther: event.target.value }))}
+                    placeholder="Describe the other condition"
+                    required
+                  />
+                </Field>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold leading-6 text-amber-900">
+                Starting Gate Out here creates the same Gate-Out transaction used by the dedicated Gate Out module. The selected Date Out is used to compute storage and applicable Gate-Out charges using the correct Empty/Loaded and Local/International rate configuration.
+              </div>
+              <Field label="Date and Time Out" hint="Gate-Out time slots remain subject to yard capacity and the existing Gate-Out scheduling rules.">
+                <input
+                  type="datetime-local"
+                  step="3600"
+                  className="input"
+                  value={form.outDate}
+                  onChange={(event) => setForm((current) => ({ ...current, outDate: event.target.value }))}
+                  required
+                />
+              </Field>
+            </>
+          )}
+
+          <Field label={isRelease ? "Release Remarks" : "Gate-Out Remarks"}>
+            <textarea
+              className="input min-h-24 resize-y"
+              value={form.remarks}
+              onChange={(event) => setForm((current) => ({ ...current, remarks: event.target.value }))}
+              placeholder={isRelease ? "Optional physical release remarks" : "Optional Gate-Out request remarks"}
+            />
+          </Field>
+
+          <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:justify-end">
+            <button type="button" onClick={onClose} className="btn-secondary" disabled={saving}>Cancel</button>
+            <button type="submit" className="btn-primary" disabled={saving}>
+              <LogOut size={16} /> {saving ? (isRelease ? "Releasing..." : "Starting Gate Out...") : (isRelease ? "Complete Gate Out" : "Start Gate Out")}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 const AdminInventory = () => {
   const [areas, setAreas] = useState([])
   const [containers, setContainers] = useState([])
   const [summary, setSummary] = useState(null)
+  const [inventoryStats, setInventoryStats] = useState({ totalContainers: 0, waitingStorage: 0, inventoryTeu: 0, inventoryFeu: 0 })
+  const [inventoryTruncated, setInventoryTruncated] = useState(false)
+  const [clientOptions, setClientOptions] = useState([])
+  const [selectedClientId, setSelectedClientId] = useState("all")
   const [selectedAreaId, setSelectedAreaId] = useState("")
   const [selectedStatus, setSelectedStatus] = useState(DEFAULT_INVENTORY_STATUS)
   const [selectedLoadStatus, setSelectedLoadStatus] = useState("all")
@@ -669,6 +801,7 @@ const AdminInventory = () => {
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
   const [loading, setLoading] = useState(true)
+  const [tableLoading, setTableLoading] = useState(true)
   const [alert, setAlert] = useState({ type: "", message: "" })
 
   const [modalOpen, setModalOpen] = useState(false)
@@ -683,9 +816,20 @@ const AdminInventory = () => {
   const [loadingBlocks, setLoadingBlocks] = useState(false)
   const [modalSlotsLoading, setModalSlotsLoading] = useState(false)
   const [savingLocation, setSavingLocation] = useState(false)
+  const [gateOutContainer, setGateOutContainer] = useState(null)
+  const [gateOutForm, setGateOutForm] = useState({ outDate: "", remarks: "", gateOutConditions: ["GOOD"], gateOutConditionOther: "" })
+  const [gateOutSaving, setGateOutSaving] = useState(false)
   const modalSlotRequestRef = useRef(0)
+  const inventoryRequestRef = useRef(0)
+  const inventoryAbortRef = useRef(null)
+  const inventoryInFlightRef = useRef({ key: "", promise: null })
+  const inventoryStatsInFlightRef = useRef(null)
+  const initialLoadStartedRef = useRef(false)
+  const realtimeRefreshTimerRef = useRef(null)
+  const realtimeRefreshFlagsRef = useRef({ inventory: false, yard: false })
   const user = useAuthStore((state) => state.user)
   const canDeleteBooking = hasModulePermission(user, "operations", "delete")
+  const canManageInventoryGateOut = hasModulePermission(user, "inventory", "edit")
   const canCreateLegacyContainer = user?.role === "super_admin"
 
   const bookingContainers = useMemo(() => {
@@ -710,23 +854,32 @@ const AdminInventory = () => {
       const matchesLoadStatus = selectedLoadStatus === "all" || normalizedLoadStatus === selectedLoadStatus
       const matchesRateType = selectedRateType === "all" || (container.rateType || "local") === selectedRateType
       const matchesRecordSource = selectedRecordSource === "all" || (container.recordSource || "client_booking") === selectedRecordSource
+      const matchesClient = selectedClientId === "all" || String(container.client || "") === String(selectedClientId)
       const matchesSearch = !term || [container.containerNumber, container.bookingReference, container.legacyRegistrationNumber, container.clientName, container.areaName, container.slotNumber]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term))
-      return matchesArea && matchesStatus && matchesLoadStatus && matchesRateType && matchesRecordSource && matchesSearch
+      return matchesArea && matchesStatus && matchesLoadStatus && matchesRateType && matchesRecordSource && matchesClient && matchesSearch
     })
-  }, [bookingContainers, selectedAreaId, selectedLoadStatus, selectedRateType, selectedRecordSource, selectedStatus, search])
+  }, [bookingContainers, selectedAreaId, selectedClientId, selectedLoadStatus, selectedRateType, selectedRecordSource, selectedStatus, search])
+
+  const inventoryFilterKey = `${selectedAreaId}|${selectedClientId}|${selectedStatus}|${selectedLoadStatus}|${selectedRateType}|${selectedRecordSource}|${search.trim()}`
+  const inventoryFilterRef = useRef(null)
+  inventoryFilterRef.current = {
+    selectedAreaId,
+    selectedClientId,
+    selectedStatus,
+    selectedLoadStatus,
+    selectedRateType,
+    selectedRecordSource,
+    search: search.trim(),
+  }
+  const lastRequestedFilterKeyRef = useRef(inventoryFilterKey)
 
   const containerPagination = usePagination(
     filteredContainers,
     10,
-    `${selectedAreaId}|${selectedStatus}|${selectedLoadStatus}|${selectedRateType}|${selectedRecordSource}|${search}`,
+    inventoryFilterKey,
   )
-
-  const waitingForStorage = bookingContainers.filter((container) => container.bookingStatus === "gate_in_approved")
-  const storedContainers = bookingContainers.filter((container) => ["stored_in_assigned_area", "gate_out_requested", "gate_out_approved", "gate_out_reversal_requested"].includes(container.bookingStatus))
-  const assignedTeu = bookingContainers.reduce((sum, container) => sum + getTeu(container.containerSize), 0)
-  const assignedFeu = bookingContainers.reduce((sum, container) => sum + getFeu(container.containerSize), 0)
 
   const loadAreas = async () => {
     const { data } = await api.get("/admin/inventory/areas")
@@ -738,36 +891,185 @@ const AdminInventory = () => {
     setSummary(data.summary || null)
   }
 
-  const loadContainers = async () => {
-    const { data } = await api.get("/admin/inventory/containers")
-    setContainers(data.containers || [])
+  const loadInventoryStats = async ({ refresh = false } = {}) => {
+    if (inventoryStatsInFlightRef.current) return inventoryStatsInFlightRef.current
+
+    const query = refresh ? "?refresh=true" : ""
+    let requestPromise
+    requestPromise = api.get(`/admin/inventory/stats${query}`, { timeout: 10000 })
+      .then(({ data }) => {
+        if (!data?.stats) return
+        setInventoryStats({
+          totalContainers: Number(data.stats.totalContainers) || 0,
+          waitingStorage: Number(data.stats.waitingStorage) || 0,
+          inventoryTeu: Number(data.stats.inventoryTeu) || 0,
+          inventoryFeu: Number(data.stats.inventoryFeu) || 0,
+        })
+      })
+      .catch((error) => {
+        if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
+          console.warn("Inventory totals could not be refreshed without blocking the table.", error)
+        }
+      })
+      .finally(() => {
+        if (inventoryStatsInFlightRef.current === requestPromise) inventoryStatsInFlightRef.current = null
+      })
+
+    inventoryStatsInFlightRef.current = requestPromise
+    return requestPromise
+  }
+
+  const loadContainers = async ({ includeStats = false } = {}) => {
+    const filters = inventoryFilterRef.current || {}
+    const params = new URLSearchParams({
+      source: "booking",
+      limit: "80",
+      includeStats: includeStats ? "true" : "false",
+    })
+    if (filters.selectedClientId && filters.selectedClientId !== "all") params.set("clientId", filters.selectedClientId)
+    if (filters.selectedAreaId) params.set("areaId", filters.selectedAreaId)
+    if (filters.selectedStatus && filters.selectedStatus !== "all") params.set("status", filters.selectedStatus)
+    if (filters.selectedLoadStatus && filters.selectedLoadStatus !== "all") params.set("loadStatus", filters.selectedLoadStatus)
+    if (filters.selectedRateType && filters.selectedRateType !== "all") params.set("rateType", filters.selectedRateType)
+    if (filters.selectedRecordSource && filters.selectedRecordSource !== "all") params.set("recordSource", filters.selectedRecordSource)
+    if (filters.search) params.set("search", filters.search)
+
+    const requestKey = params.toString()
+    const currentInFlight = inventoryInFlightRef.current
+    if (currentInFlight.promise && currentInFlight.key === requestKey) {
+      return currentInFlight.promise
+    }
+
+    if (inventoryAbortRef.current) inventoryAbortRef.current.abort()
+    const controller = new AbortController()
+    inventoryAbortRef.current = controller
+    const requestId = ++inventoryRequestRef.current
+
+    setTableLoading(true)
+    let requestPromise
+    requestPromise = api.get(`/admin/inventory/containers?${requestKey}`, { signal: controller.signal })
+      .then(({ data }) => {
+        if (requestId !== inventoryRequestRef.current) return
+        setContainers(data.containers || [])
+        if (data.stats) {
+          setInventoryStats({
+            totalContainers: Number(data.stats.totalContainers) || 0,
+            waitingStorage: Number(data.stats.waitingStorage) || 0,
+            inventoryTeu: Number(data.stats.inventoryTeu) || 0,
+            inventoryFeu: Number(data.stats.inventoryFeu) || 0,
+          })
+        }
+        setInventoryTruncated(Boolean(data.truncated))
+      })
+      .catch((error) => {
+        if (error?.code === "ERR_CANCELED" || error?.name === "CanceledError" || controller.signal.aborted) return
+        throw error
+      })
+      .finally(() => {
+        if (inventoryInFlightRef.current.promise === requestPromise) {
+          inventoryInFlightRef.current = { key: "", promise: null }
+        }
+        if (inventoryAbortRef.current === controller) inventoryAbortRef.current = null
+        if (requestId === inventoryRequestRef.current) setTableLoading(false)
+      })
+
+    inventoryInFlightRef.current = { key: requestKey, promise: requestPromise }
+    return requestPromise
+  }
+
+  const loadClientOptions = async () => {
+    const { data } = await api.get("/admin/inventory/clients")
+    setClientOptions(data.clients || [])
   }
 
   const loadAll = async () => {
     try {
       setLoading(true)
       setAlert({ type: "", message: "" })
-      await Promise.all([loadAreas(), loadSummary(), loadContainers()])
+      loadInventoryStats().catch(() => {})
+      await Promise.all([loadAreas(), loadSummary(), loadClientOptions(), loadContainers({ includeStats: false })])
     } catch (error) {
-      setAlert({ type: "error", message: getApiError(error) })
+      if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
+        setAlert({ type: "error", message: getApiError(error) })
+      }
     } finally {
       setLoading(false)
     }
   }
 
+  const refreshInventory = async ({ refreshYard = false } = {}) => {
+    if (realtimeRefreshTimerRef.current) {
+      window.clearTimeout(realtimeRefreshTimerRef.current)
+      realtimeRefreshTimerRef.current = null
+      realtimeRefreshFlagsRef.current = { inventory: false, yard: false }
+    }
+    const jobs = [loadContainers({ includeStats: false })]
+    loadInventoryStats({ refresh: true }).catch(() => {})
+    if (refreshYard) jobs.push(loadAreas(), loadSummary())
+    return Promise.all(jobs)
+  }
+
   useEffect(() => {
+    if (initialLoadStartedRef.current) return
+    initialLoadStartedRef.current = true
     loadAll()
   }, [])
 
   useEffect(() => {
+    if (lastRequestedFilterKeyRef.current === inventoryFilterKey) return undefined
+
+    const timer = window.setTimeout(() => {
+      lastRequestedFilterKeyRef.current = inventoryFilterKey
+      loadContainers({ includeStats: false }).catch((error) => {
+        if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
+          setAlert({ type: "error", message: getApiError(error) })
+        }
+      })
+    }, 350)
+
+    return () => window.clearTimeout(timer)
+  }, [inventoryFilterKey])
+
+  useEffect(() => {
     const handleRealtime = (event) => {
       const eventType = event.detail?.type || ""
-      if (!eventType.startsWith("booking:") && !eventType.startsWith("inventory:") && !eventType.startsWith("storage:") && !eventType.startsWith("yard:")) return
-      loadAll()
+      const yardChanged = eventType.startsWith("yard:") || eventType.startsWith("inventory:block_")
+      const inventoryChanged = eventType.startsWith("booking:")
+        || eventType.startsWith("storage:")
+        || ["inventory:container_assigned", "inventory:container_created", "inventory:legacy_container_created", "inventory:updated"].includes(eventType)
+
+      if (!inventoryChanged && !yardChanged) return
+
+      realtimeRefreshFlagsRef.current = {
+        inventory: realtimeRefreshFlagsRef.current.inventory || inventoryChanged,
+        yard: realtimeRefreshFlagsRef.current.yard || yardChanged,
+      }
+
+      if (realtimeRefreshTimerRef.current) window.clearTimeout(realtimeRefreshTimerRef.current)
+      realtimeRefreshTimerRef.current = window.setTimeout(() => {
+        const flags = realtimeRefreshFlagsRef.current
+        realtimeRefreshFlagsRef.current = { inventory: false, yard: false }
+        realtimeRefreshTimerRef.current = null
+
+        const jobs = []
+        if (flags.inventory) {
+          jobs.push(loadContainers({ includeStats: false }))
+          loadInventoryStats().catch(() => {})
+        }
+        if (flags.yard) jobs.push(loadAreas(), loadSummary())
+        Promise.all(jobs).catch((error) => {
+          if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
+            setAlert({ type: "error", message: getApiError(error) })
+          }
+        })
+      }, 400)
     }
 
     window.addEventListener("otli:realtime", handleRealtime)
-    return () => window.removeEventListener("otli:realtime", handleRealtime)
+    return () => {
+      window.removeEventListener("otli:realtime", handleRealtime)
+      if (realtimeRefreshTimerRef.current) window.clearTimeout(realtimeRefreshTimerRef.current)
+    }
   }, [])
 
   const loadBlocksForArea = async (areaId) => {
@@ -903,7 +1205,7 @@ const AdminInventory = () => {
       })
       setAlert({ type: "success", message: "Container location updated successfully." })
       closeLocationModal()
-      await loadAll()
+      await refreshInventory({ refreshYard: true })
     } catch (error) {
       setAlert({ type: "error", message: getApiError(error) })
     } finally {
@@ -920,7 +1222,7 @@ const AdminInventory = () => {
       await api.patch(`/admin/bookings/${container.id}/store`)
       setSelectedContainer(null)
       setAlert({ type: "success", message: "Container storage approved. Billing was computed and the record is now visible in Storage Monitoring." })
-      await loadAll()
+      await refreshInventory()
     } catch (error) {
       setAlert({ type: "error", message: getApiError(error) })
     } finally {
@@ -928,11 +1230,94 @@ const AdminInventory = () => {
     }
   }
 
+  const openInventoryGateOut = (container) => {
+    if (!canManageInventoryGateOut) return
+    if (!["stored_in_assigned_area", "gate_out_approved"].includes(container.bookingStatus)) return
+
+    setSelectedContainer(null)
+    setGateOutContainer(container)
+    setGateOutForm({
+      outDate: container.outDate ? toDateTimeLocalValue(container.outDate) : getDefaultGateOutDateTime(),
+      remarks: "",
+      gateOutConditions: container.gateOutConditions?.length
+        ? container.gateOutConditions
+        : container.gateInConditions?.length
+          ? container.gateInConditions
+          : ["GOOD"],
+      gateOutConditionOther: container.gateOutConditionOther || container.gateInConditionOther || "",
+    })
+    setAlert({ type: "", message: "" })
+  }
+
+  const closeInventoryGateOut = () => {
+    if (gateOutSaving) return
+    setGateOutContainer(null)
+    setGateOutForm({ outDate: "", remarks: "", gateOutConditions: ["GOOD"], gateOutConditionOther: "" })
+  }
+
+  const handleInventoryGateOutSubmit = async (event) => {
+    event.preventDefault()
+    if (!gateOutContainer || !canManageInventoryGateOut) return
+
+    const isRelease = gateOutContainer.bookingStatus === "gate_out_approved"
+    if (!isRelease) {
+      const parsedOutDate = new Date(gateOutForm.outDate)
+      if (!gateOutForm.outDate || Number.isNaN(parsedOutDate.getTime())) {
+        setAlert({ type: "error", message: "Select a valid Gate-Out date and time." })
+        return
+      }
+    }
+
+    if (isRelease && gateOutForm.gateOutConditions.includes("OTHER") && !gateOutForm.gateOutConditionOther.trim()) {
+      setAlert({ type: "error", message: "Describe the other Gate-Out container condition before completing release." })
+      return
+    }
+
+    try {
+      setGateOutSaving(true)
+      setAlert({ type: "", message: "" })
+
+      if (isRelease) {
+        const { data } = await api.patch(`/admin/inventory/containers/${gateOutContainer.id}/gate-out/complete`, {
+          actualContainerNumber: gateOutContainer.containerNumber,
+          remarks: gateOutForm.remarks.trim(),
+          gateOutConditions: gateOutForm.gateOutConditions,
+          gateOutConditionOther: gateOutForm.gateOutConditionOther.trim(),
+        })
+        setAlert({ type: "success", message: data.message || "Container Gate-Out completed and the yard slot was released." })
+        setGateOutContainer(null)
+        await refreshInventory({ refreshYard: true })
+      } else {
+        const parsedOutDate = new Date(gateOutForm.outDate)
+        const { data } = await api.post(`/admin/inventory/containers/${gateOutContainer.id}/gate-out-request`, {
+          outDate: parsedOutDate.toISOString(),
+          remarks: gateOutForm.remarks.trim(),
+        })
+        setAlert({ type: "success", message: data.message || "Gate-Out initiated from Inventory." })
+        setGateOutContainer(null)
+        await refreshInventory()
+      }
+    } catch (error) {
+      setAlert({ type: "error", message: getApiError(error) })
+    } finally {
+      setGateOutSaving(false)
+    }
+  }
+
   const handleLegacyContainerCreated = async (data) => {
     setAlert({ type: "success", message: data.message || "Existing container registered successfully." })
-    setSelectedStatus("stored_in_assigned_area")
-    setSelectedRecordSource("legacy_migration")
-    await loadAll()
+    const nextStatus = "stored_in_assigned_area"
+    const nextRecordSource = "legacy_migration"
+    const nextFilterKey = `${selectedAreaId}|${selectedClientId}|${nextStatus}|${selectedLoadStatus}|${selectedRateType}|${nextRecordSource}|${search.trim()}`
+    inventoryFilterRef.current = {
+      ...inventoryFilterRef.current,
+      selectedStatus: nextStatus,
+      selectedRecordSource: nextRecordSource,
+    }
+    lastRequestedFilterKeyRef.current = nextFilterKey
+    setSelectedStatus(nextStatus)
+    setSelectedRecordSource(nextRecordSource)
+    await refreshInventory({ refreshYard: true })
   }
 
   const deleteContainerRecord = async (container) => {
@@ -945,7 +1330,7 @@ const AdminInventory = () => {
       const { data } = await api.delete(`/admin/bookings/${container.id}`)
       if (selectedContainer?.id === container.id) setSelectedContainer(null)
       setAlert({ type: "success", message: data.message || "Container booking deleted successfully." })
-      await loadAll()
+      await refreshInventory({ refreshYard: true })
     } catch (error) {
       setAlert({ type: "error", message: getApiError(error) })
     } finally {
@@ -961,7 +1346,7 @@ const AdminInventory = () => {
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">Inventory Module</div>
             <h1 className="mt-1 text-2xl font-black text-slate-950">Gate-In Container Inventory</h1>
             <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-500">
-              Containers appear here after Gate-In approval. Authorized admins can also register existing containers that were already stored before the system was implemented. Waiting-for-storage records remain prioritized first.
+              Containers appear here after Gate-In approval. Authorized admins can register existing containers, manage storage locations, and start or complete eligible Gate-Out transactions directly from Inventory. Waiting-for-storage records remain prioritized first.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -970,18 +1355,18 @@ const AdminInventory = () => {
                 <Plus size={16} /> Add Existing Container
               </button>
             )}
-            <button type="button" onClick={loadAll} className="btn-secondary shrink-0" disabled={loading}>
-              <RefreshCw size={16} /> Refresh
+            <button type="button" onClick={loadAll} className="btn-secondary shrink-0" disabled={loading || tableLoading}>
+              <RefreshCw size={16} className={loading || tableLoading ? "animate-spin" : ""} /> Refresh
             </button>
           </div>
         </div>
 
         <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Area Capacity" value={`${summary?.totalAreaCapacityTeu || 0} TEU`} icon={Warehouse} />
-          <StatCard label="Total Containers" value={bookingContainers.length} icon={MapPin} />
-          <StatCard label="Waiting Storage" value={waitingForStorage.length} icon={PackageCheck} />
-          <StatCard label="Inventory TEU" value={Math.round(assignedTeu * 100) / 100} icon={CalendarClock} />
-          <StatCard label="Inventory FEU" value={Math.round(assignedFeu * 100) / 100} icon={Database} />
+          <StatCard label="Total Containers" value={inventoryStats.totalContainers} icon={MapPin} />
+          <StatCard label="Waiting Storage" value={inventoryStats.waitingStorage} icon={PackageCheck} />
+          <StatCard label="Inventory TEU" value={Math.round(inventoryStats.inventoryTeu * 100) / 100} icon={CalendarClock} />
+          <StatCard label="Inventory FEU" value={Math.round(inventoryStats.inventoryFeu * 100) / 100} icon={Database} />
         </div>
 
         <div className="mt-4">
@@ -1017,7 +1402,7 @@ const AdminInventory = () => {
               >
                 <SlidersHorizontal size={18} /> Filter
                 <span className="rounded-full bg-slate-950 px-2 py-0.5 text-xs text-white">
-                  {(selectedAreaId ? 1 : 0) + (selectedStatus !== "all" ? 1 : 0) + (selectedLoadStatus !== "all" ? 1 : 0) + (selectedRateType !== "all" ? 1 : 0) + (selectedRecordSource !== "all" ? 1 : 0)}
+                  {(selectedAreaId ? 1 : 0) + (selectedClientId !== "all" ? 1 : 0) + (selectedStatus !== "all" ? 1 : 0) + (selectedLoadStatus !== "all" ? 1 : 0) + (selectedRateType !== "all" ? 1 : 0) + (selectedRecordSource !== "all" ? 1 : 0)}
                 </span>
               </button>
 
@@ -1030,6 +1415,7 @@ const AdminInventory = () => {
                       className="text-xs font-black text-emerald-700"
                       onClick={() => {
                         setSelectedAreaId("")
+                        setSelectedClientId("all")
                         setSelectedStatus(DEFAULT_INVENTORY_STATUS)
                         setSelectedLoadStatus("all")
                         setSelectedRateType("all")
@@ -1041,6 +1427,12 @@ const AdminInventory = () => {
                   </div>
 
                   <div className="space-y-4">
+                    <Field label="Client">
+                      <select className="input" value={selectedClientId} onChange={(event) => setSelectedClientId(event.target.value)}>
+                        <option value="all">All clients</option>
+                        {clientOptions.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+                      </select>
+                    </Field>
                     <Field label="Area">
                       <select className="input" value={selectedAreaId} onChange={(event) => setSelectedAreaId(event.target.value)}>
                         <option value="">All assigned areas</option>
@@ -1075,7 +1467,7 @@ const AdminInventory = () => {
         </div>
 
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">
-          Showing {filteredContainers.length} of {bookingContainers.length} Gate-In accepted containers • waiting for storage first
+          Showing {filteredContainers.length} matching containers • {inventoryStats.totalContainers} total in inventory{inventoryTruncated ? " • result limit reached; refine filters to narrow the list" : ""}
         </div>
 
         <div className="overflow-x-auto">
@@ -1092,13 +1484,25 @@ const AdminInventory = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {filteredContainers.length === 0 && !loading && (
+              {(loading || tableLoading) && filteredContainers.length === 0 && <TableLoadingRow colSpan={7} rows={7} actionColumn label="Loading inventory containers" />}
+              {filteredContainers.length === 0 && !loading && !tableLoading && (
                 <tr>
                   <td colSpan="7" className="px-5 py-10 text-center font-bold text-slate-500">No Gate-In accepted containers found.</td>
                 </tr>
               )}
               {containerPagination.paginatedItems.map((container) => {
                 const canRelocate = ["approved_area_assigned", "gate_in_approved", "stored_in_assigned_area"].includes(container.bookingStatus)
+                const canStartGateOut = container.bookingStatus === "stored_in_assigned_area"
+                const canCompleteGateOut = container.bookingStatus === "gate_out_approved"
+                const gateOutPending = ["gate_out_requested", "gate_out_reversal_requested"].includes(container.bookingStatus)
+                const showGateOutAction = canStartGateOut || canCompleteGateOut || gateOutPending
+                const gateOutLabel = canStartGateOut
+                  ? `Start Gate Out for ${container.containerNumber}`
+                  : canCompleteGateOut
+                    ? `Complete Gate Out and release ${container.containerNumber}`
+                    : container.bookingStatus === "gate_out_reversal_requested"
+                      ? `Gate-Out reversal for ${container.containerNumber} is pending review`
+                      : `Gate-Out for ${container.containerNumber} is pending payment or approval`
 
                 return (
                   <tr key={container.id} className="align-top hover:bg-slate-50/70">
@@ -1145,6 +1549,17 @@ const AdminInventory = () => {
                         >
                           <PackageCheck size={17} aria-hidden="true" />
                         </TableActionButton>
+                        {showGateOutAction && (
+                          <TableActionButton
+                            label={!canManageInventoryGateOut ? "You do not have permission to process Gate Out from Inventory" : gateOutLabel}
+                            variant={canCompleteGateOut ? "success" : "warning"}
+                            disabled={!canManageInventoryGateOut || gateOutPending}
+                            loading={gateOutSaving && gateOutContainer?.id === container.id}
+                            onClick={() => openInventoryGateOut(container)}
+                          >
+                            <LogOut size={17} aria-hidden="true" />
+                          </TableActionButton>
+                        )}
                       </TableCrudActions>
                     </td>
                   </tr>
@@ -1236,10 +1651,65 @@ const AdminInventory = () => {
                   <div><span className="font-black text-slate-500">Storage Status:</span> {selectedContainer.bookingStatus === "gate_in_approved" ? "Waiting for approval" : "Completed"}</div>
                 </div>
               </WorkflowDecisionPanel>
+
+              {["stored_in_assigned_area", "gate_out_requested", "gate_out_approved", "gate_out_reversal_requested"].includes(selectedContainer.bookingStatus) && (
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-start gap-3">
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-50 text-emerald-700">
+                        <LogOut size={20} />
+                      </span>
+                      <div>
+                        <div className="text-xs font-black uppercase tracking-wide text-emerald-700">Gate-Out Action</div>
+                        <h3 className="mt-1 text-lg font-black text-slate-950">
+                          {selectedContainer.bookingStatus === "stored_in_assigned_area"
+                            ? "Start Gate Out from Inventory"
+                            : selectedContainer.bookingStatus === "gate_out_approved"
+                              ? "Complete Physical Gate Out"
+                              : "Gate Out is already in progress"}
+                        </h3>
+                        <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-slate-500">
+                          {selectedContainer.bookingStatus === "stored_in_assigned_area"
+                            ? "Select Date Out to compute the Gate-Out transaction using the container's current rate classification."
+                            : selectedContainer.bookingStatus === "gate_out_approved"
+                              ? "Payment and Gate-Out approval are complete. Record the final condition and release the container from its yard slot."
+                              : selectedContainer.bookingStatus === "gate_out_reversal_requested"
+                                ? "A Gate-Out reversal request is pending review. Release is temporarily blocked."
+                                : "The Gate-Out request is waiting for payment and/or approval in the Gate Out workflow."}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={selectedContainer.bookingStatus === "gate_out_approved" ? "btn-primary shrink-0" : "btn-secondary shrink-0"}
+                      onClick={() => openInventoryGateOut(selectedContainer)}
+                      disabled={!canManageInventoryGateOut || !["stored_in_assigned_area", "gate_out_approved"].includes(selectedContainer.bookingStatus)}
+                    >
+                      <LogOut size={16} />
+                      {selectedContainer.bookingStatus === "gate_out_approved"
+                        ? "Complete Gate Out"
+                        : selectedContainer.bookingStatus === "stored_in_assigned_area"
+                          ? "Start Gate Out"
+                          : selectedContainer.bookingStatus === "gate_out_reversal_requested"
+                            ? "Reversal Pending"
+                            : "Gate Out Pending"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
+
+      <InventoryGateOutModal
+        container={gateOutContainer}
+        form={gateOutForm}
+        setForm={setGateOutForm}
+        saving={gateOutSaving}
+        onClose={closeInventoryGateOut}
+        onSubmit={handleInventoryGateOutSubmit}
+      />
 
       <LegacyContainerModal
         open={legacyModalOpen}

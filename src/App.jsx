@@ -18,6 +18,7 @@ import AdminRateSetup from "./pages/modules/AdminRateSetup"
 import AdminPaymentTypes from "./pages/modules/AdminPaymentTypes"
 import AdminBilling from "./pages/modules/AdminBilling"
 import AdminGateOut from "./pages/modules/AdminGateOut"
+import AdminGateOutCalendar from "./pages/modules/AdminGateOutCalendar"
 import AdminReleaseContainer from "./pages/modules/AdminReleaseContainer"
 import AdminReports from "./pages/modules/AdminReports"
 import AdminPaymentHistory from "./pages/modules/AdminPaymentHistory"
@@ -69,6 +70,7 @@ function App() {
             <Route path="billing/payment-types" element={<TitledPage title="Payment Types"><ProtectedModule moduleName="billing"><AdminPaymentTypes /></ProtectedModule></TitledPage>} />
             <Route path="billing/payment-verification" element={<TitledPage title="Payment Verification"><ProtectedModule moduleName="billing"><AdminBilling /></ProtectedModule></TitledPage>} />
             <Route path="billing/gate-out" element={<TitledPage title="Gate-Out"><ProtectedModule moduleName="billing"><AdminGateOut /></ProtectedModule></TitledPage>} />
+            <Route path="billing/gate-out-calendar" element={<TitledPage title="Gate-Out Calendar"><ProtectedModule moduleName="billing" allowedRoles={["super_admin"]}><AdminGateOutCalendar /></ProtectedModule></TitledPage>} />
             <Route path="billing/release-container" element={<TitledPage title="Release Container"><ProtectedModule moduleName="billing"><AdminReleaseContainer /></ProtectedModule></TitledPage>} />
             <Route path="billing/invoices" element={<Navigate to="/billing/payment-history" replace />} />
             <Route path="billing/payment-history" element={<TitledPage title="Payment History"><ProtectedModule moduleName="billing"><AdminPaymentHistory /></ProtectedModule></TitledPage>} />

@@ -17,6 +17,7 @@ import TableCrudActions from "../../components/ui/TableCrudActions"
 import { useClickOutside } from "../../hooks/useClickOutside"
 import { usePagination } from "../../hooks/usePagination"
 import { api, getApiError, resolveFileUrl } from "../../lib/api"
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const initialForm = {
   type: "bank",
@@ -226,6 +227,7 @@ const AdminPaymentTypes = () => {
           <table className="min-w-[1050px] w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs font-black uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-4">Payment Type</th><th className="px-5 py-4">Account Details</th><th className="px-5 py-4">QR</th><th className="px-5 py-4">Status</th><th className="px-5 py-4 text-right">Actions</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
+              {loading && filteredItems.length === 0 && <TableLoadingRow colSpan={5} rows={6} actionColumn label="Loading payment types" />}
               {pagination.paginatedItems.map((item) => (
                 <tr key={item.id} className="transition hover:bg-slate-50/80">
                   <td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`grid h-11 w-11 place-items-center rounded-2xl ${item.type === "bank" ? "bg-blue-50 text-blue-700" : "bg-violet-50 text-violet-700"}`}>{item.type === "bank" ? <Building2 size={19} /> : <Smartphone size={19} />}</span><div><p className="font-black text-slate-950">{item.name}</p><p className="text-xs font-bold capitalize text-slate-500">{item.type === "ewallet" ? "eWallet" : "Bank"}</p></div></div></td>

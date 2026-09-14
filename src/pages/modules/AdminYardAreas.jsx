@@ -17,6 +17,7 @@ import Pagination from "../../components/ui/Pagination"
 import TableCrudActions from "../../components/ui/TableCrudActions"
 import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const emptyAreaForm = {
   name: "",
@@ -397,11 +398,7 @@ const AdminYardAreas = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {loading && (
-                <tr>
-                  <td colSpan="8" className="px-4 py-10 text-center font-bold text-slate-500">Loading areas...</td>
-                </tr>
-              )}
+              {loading && filteredAreas.length === 0 && <TableLoadingRow colSpan={8} rows={6} actionColumn label="Loading yard areas" />}
 
               {!loading && filteredAreas.length === 0 && (
                 <tr>

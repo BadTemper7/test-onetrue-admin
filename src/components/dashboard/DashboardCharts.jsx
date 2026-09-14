@@ -191,7 +191,7 @@ const RevenueChart = ({ data = [] }) => {
   return (
     <ChartShell
       title="Recorded revenue"
-      description="Revenue recognized when Gate-Out release completion reports were generated."
+      description="Revenue is the total of approved Gate-In and Gate-Out payments for completed releases."
       summary={`Period total: ${formatPeso(periodTotal)}`}
     >
       {!chartData.length ? (

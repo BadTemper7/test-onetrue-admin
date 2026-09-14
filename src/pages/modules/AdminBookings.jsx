@@ -30,6 +30,7 @@ import { api, getApiError } from "../../lib/api"
 import { useAuthStore } from "../../stores/authStore"
 import { hasModulePermission } from "../../lib/permissions"
 import { printBookingDocument } from "../../lib/printDocument"
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const statusLabels = {
   pending_admin_approval: "Pending Admin Approval",
@@ -140,7 +141,8 @@ const getScheduleSlotClasses = (status) => {
 const AdminBookings = () => {
   const [bookings, setBookings] = useState([])
   const [summary, setSummary] = useState({})
-  const [filters, setFilters] = useState({ status: "all", billingStatus: "all", loadStatus: "all", rateType: "all", recordSource: "all", search: "" })
+  const [clients, setClients] = useState([])
+  const [filters, setFilters] = useState({ status: "all", billingStatus: "all", loadStatus: "all", rateType: "all", recordSource: "all", clientId: "all", search: "" })
   const [showFilters, setShowFilters] = useState(false)
   const [loading, setLoading] = useState(true)
   const [deletingId, setDeletingId] = useState("")
@@ -178,6 +180,7 @@ const AdminBookings = () => {
       if (filters.loadStatus !== "all") params.set("loadStatus", filters.loadStatus)
       if (filters.rateType !== "all") params.set("rateType", filters.rateType)
       if (filters.recordSource !== "all") params.set("recordSource", filters.recordSource)
+      if (filters.clientId !== "all") params.set("clientId", filters.clientId)
 
       const [{ data }, summaryResponse] = await Promise.all([
         api.get(`/admin/bookings?${params.toString()}`),
@@ -192,6 +195,15 @@ const AdminBookings = () => {
     }
   }
 
+  const loadClients = async () => {
+    try {
+      const { data } = await api.get("/admin/bookings/clients")
+      setClients(data.clients || [])
+    } catch {
+      setClients([])
+    }
+  }
+
   const loadBookingCalendar = async (dateValue = scheduleDate) => {
     try {
       setScheduleLoading(true)
@@ -200,6 +212,7 @@ const AdminBookings = () => {
         date: dateValue,
         timezoneOffset: String(new Date().getTimezoneOffset()),
       })
+      if (filters.clientId !== "all") params.set("clientId", filters.clientId)
       const { data } = await api.get(`/admin/bookings/calendar?${params.toString()}`)
       setScheduleRows(data.rows || [])
       setScheduleSummary(data.summary || { total: 0, pending: 0, approved: 0, active: 0, completed: 0, other: 0 })
@@ -219,12 +232,16 @@ const AdminBookings = () => {
   useEffect(() => {
     loadBookings()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.status, filters.billingStatus, filters.loadStatus, filters.rateType, filters.recordSource])
+  }, [filters.status, filters.billingStatus, filters.loadStatus, filters.rateType, filters.recordSource, filters.clientId])
+
+  useEffect(() => {
+    loadClients()
+  }, [])
 
   useEffect(() => {
     loadBookingCalendar(scheduleDate)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scheduleDate])
+  }, [scheduleDate, filters.clientId])
 
   const deleteBooking = async (booking) => {
     if (!canDeleteBooking) return
@@ -317,7 +334,7 @@ const AdminBookings = () => {
     completed: summary.completed ?? bookings.filter((item) => item.status === "completed_gate_out_done").length,
   }), [bookings, summary])
 
-  const pagination = usePagination(bookings, 10, `${filters.status}|${filters.billingStatus}|${filters.loadStatus}|${filters.rateType}|${filters.search}`)
+  const pagination = usePagination(bookings, 10, `${filters.status}|${filters.billingStatus}|${filters.loadStatus}|${filters.rateType}|${filters.recordSource}|${filters.clientId}|${filters.search}`)
   const printAvailability = selectedBooking ? {
     gateIn: Boolean(selectedBooking.gateInApprovedAt && selectedBooking.gateInPassNumber),
     gateOut: Boolean(selectedBooking.gateOutApprovedAt && selectedBooking.gateOutPassNumber),
@@ -459,6 +476,21 @@ const AdminBookings = () => {
             </div>
           </div>
 
+          <div className="mt-3 flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-wide text-slate-500">Client Filter</p>
+              <p className="mt-0.5 text-xs font-semibold text-slate-500">Limit this tracking calendar to one client.</p>
+            </div>
+            <select
+              className="input !py-2.5 sm:w-[280px]"
+              value={filters.clientId}
+              onChange={(event) => setFilters((current) => ({ ...current, clientId: event.target.value }))}
+            >
+              <option value="all">All clients</option>
+              {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+            </select>
+          </div>
+
           <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
               <div className="flex items-start gap-3">
@@ -491,19 +523,7 @@ const AdminBookings = () => {
                 </tr>
               </thead>
               <tbody>
-                {scheduleLoading && (
-                  <tr>
-                    <td colSpan={scheduleMaxSlots + 1} className="px-5 py-16">
-                      <div className="flex flex-col items-center justify-center gap-3 text-center" role="status" aria-live="polite">
-                        <LoaderCircle size={34} className="animate-spin text-emerald-600" />
-                        <div>
-                          <p className="font-black text-slate-800">Loading slot calendar</p>
-                          <p className="mt-1 text-xs font-semibold text-slate-500">Please wait while the selected day schedule is being retrieved.</p>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )}
+                {scheduleLoading && <TableLoadingRow colSpan={scheduleMaxSlots + 1} rows={5} label="Loading slot calendar" />}
                 {!scheduleLoading && scheduleRows.map((row) => (
                   <tr key={`schedule-row-${row.hour}`} className="align-top">
                     <td className="border-b border-slate-200 bg-slate-50/70 px-4 py-4">
@@ -612,7 +632,7 @@ const AdminBookings = () => {
                 <div className="absolute right-0 z-40 mt-2 w-[300px] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <p className="text-sm font-black text-slate-950">Filter Tracking</p>
-                    <button type="button" onClick={() => setFilters((current) => ({ ...current, status: "all", billingStatus: "all", loadStatus: "all", rateType: "all", recordSource: "all" }))} className="text-xs font-black text-emerald-700">Reset</button>
+                    <button type="button" onClick={() => setFilters((current) => ({ ...current, status: "all", billingStatus: "all", loadStatus: "all", rateType: "all", recordSource: "all", clientId: "all" }))} className="text-xs font-black text-emerald-700">Reset</button>
                   </div>
                   <div className="mt-4 space-y-4">
                     <label className="block">
@@ -627,6 +647,13 @@ const AdminBookings = () => {
                       <select className="input !py-3" value={filters.billingStatus} onChange={(event) => setFilters((current) => ({ ...current, billingStatus: event.target.value }))}>
                         <option value="all">All billing statuses</option>
                         {Object.entries(billingLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Client</span>
+                      <select className="input !py-3" value={filters.clientId} onChange={(event) => setFilters((current) => ({ ...current, clientId: event.target.value }))}>
+                        <option value="all">All clients</option>
+                        {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
                       </select>
                     </label>
                     <label className="block">
@@ -667,19 +694,7 @@ const AdminBookings = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {loading && bookings.length === 0 && (
-                <tr>
-                  <td colSpan="8" className="px-5 py-16">
-                    <div className="flex flex-col items-center justify-center gap-3 text-center" role="status" aria-live="polite">
-                      <LoaderCircle size={34} className="animate-spin text-emerald-600" />
-                      <div>
-                        <p className="font-black text-slate-800">Loading container tracking data</p>
-                        <p className="mt-1 text-xs font-semibold text-slate-500">Please wait while the latest bookings are being retrieved.</p>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              )}
+              {loading && bookings.length === 0 && <TableLoadingRow colSpan={8} rows={7} actionColumn label="Loading container tracking data" />}
               {(!loading || bookings.length > 0) && pagination.paginatedItems.map((booking) => (
                 <tr key={booking.id} className="align-top transition hover:bg-slate-50/80">
                   <td className="px-5 py-4">

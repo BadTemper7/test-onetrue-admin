@@ -21,6 +21,7 @@ import ContainerClassificationFilters from "../../components/ui/ContainerClassif
 import ModernDateInput from "../../components/ModernDateInput"
 import { api, getApiError } from "../../lib/api"
 import { usePagination } from "../../hooks/usePagination"
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const emptyCounts = { 20: 0, 40: 0, total: 0 }
 const emptyReport = {
@@ -238,8 +239,8 @@ const AdminReports = () => {
     if (["all", "releases"].includes(contentView)) {
       csvRows.push(
         [],
-        ["Release Report", "Client", "Container", "Record Source", "Load Status", "Classification", "Released At", "Subtotal", "VAT", "Recorded Revenue"],
-        ...(report.releaseReports || []).map((item) => [item.reportNumber, item.clientName, item.containerNumber, item.recordSource, item.containerLoadStatus, item.rateType, formatDateTime(item.releasedAt), item.billingSubtotal, item.vatAmount, item.revenueTotal]),
+        ["Release Report", "Client", "Container", "Record Source", "Load Status", "Classification", "Released At", "Subtotal", "VAT", "Gate-In Payment", "Gate-Out Payment", "Total Billing", "Recorded Revenue"],
+        ...(report.releaseReports || []).map((item) => [item.reportNumber, item.clientName, item.containerNumber, item.recordSource, item.containerLoadStatus, item.rateType, formatDateTime(item.releasedAt), item.billingSubtotal, item.vatAmount, item.gateInPaymentTotal, item.gateOutPaymentTotal, item.totalBillingAmount, item.revenueTotal]),
       )
     }
 
@@ -413,7 +414,7 @@ const AdminReports = () => {
         <div className="card overflow-hidden print:border print:shadow-none">
           <div className="border-b border-slate-200 p-5">
             <h3 className="text-lg font-black text-slate-950">Revenue by Client</h3>
-            <p className="mt-1 text-sm font-semibold text-slate-500">Ranks clients by revenue recorded when container release was completed within the selected period.</p>
+            <p className="mt-1 text-sm font-semibold text-slate-500">Ranks clients by total approved Gate-In and Gate-Out payments for releases completed within the selected period.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-left text-sm">
@@ -429,6 +430,7 @@ const AdminReports = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
+                {loading && (report.clientRevenue || []).length === 0 && <TableLoadingRow colSpan={7} rows={6} actionColumn label="Loading revenue report" />}
                 {revenuePagination.paginatedItems.map((client, index) => {
                   const rank = (revenuePagination.page - 1) * revenuePagination.pageSize + index + 1
                   return (
@@ -452,7 +454,7 @@ const AdminReports = () => {
                   </tr>
                   )
                 })}
-                {(report.clientRevenue || []).length === 0 && (
+                {!loading && (report.clientRevenue || []).length === 0 && (
                   <tr>
                     <td colSpan="7" className="px-5 py-10 text-center font-bold text-slate-500">
                       No completed release revenue found for the selected filters.
@@ -485,6 +487,9 @@ const AdminReports = () => {
                   <th className="px-5 py-3">Source</th>
                   <th className="px-5 py-3">Released</th>
                   <th className="px-5 py-3">Billing Days</th>
+                  <th className="px-5 py-3">Gate-In Payment</th>
+                  <th className="px-5 py-3">Gate-Out Payment</th>
+                  <th className="px-5 py-3">Total Billing</th>
                   <th className="px-5 py-3">Subtotal</th>
                   <th className="px-5 py-3">VAT</th>
                   <th className="px-5 py-3 text-right">Revenue</th>
@@ -492,6 +497,7 @@ const AdminReports = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
+                {loading && (report.releaseReports || []).length === 0 && <TableLoadingRow colSpan={10} rows={6} actionColumn label="Loading release report" />}
                 {releasePagination.paginatedItems.map((item) => (
                   <tr key={item.id}>
                     <td className="px-5 py-4 font-black text-emerald-700">{item.reportNumber}</td>
@@ -501,6 +507,9 @@ const AdminReports = () => {
                     <td className="px-5 py-4">{item.recordSource === "legacy_migration" ? <span className="rounded-full bg-violet-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">Legacy</span> : <span className="text-xs font-bold text-slate-500">Client Booking</span>}</td>
                     <td className="px-5 py-4 font-semibold text-slate-600">{formatDateTime(item.releasedAt)}</td>
                     <td className="px-5 py-4 font-bold text-slate-600">{item.billingDays || 0}</td>
+                    <td className="px-5 py-4 font-bold text-amber-700">{formatCurrency(item.gateInPaymentTotal)}</td>
+                    <td className="px-5 py-4 font-bold text-blue-700">{formatCurrency(item.gateOutPaymentTotal)}</td>
+                    <td className="px-5 py-4 font-black text-emerald-700">{formatCurrency(item.totalBillingAmount)}</td>
                     <td className="px-5 py-4 font-bold text-slate-600">{formatCurrency(item.billingSubtotal)}</td>
                     <td className="px-5 py-4 font-bold text-slate-600">{formatCurrency(item.vatAmount)}</td>
                     <td className="px-5 py-4 text-right font-black text-emerald-700">{formatCurrency(item.revenueTotal)}</td>
@@ -516,9 +525,9 @@ const AdminReports = () => {
                     </td>
                   </tr>
                 ))}
-                {(report.releaseReports || []).length === 0 && (
+                {!loading && (report.releaseReports || []).length === 0 && (
                   <tr>
-                    <td colSpan="11" className="px-5 py-10 text-center font-bold text-slate-500">
+                    <td colSpan="10" className="px-5 py-10 text-center font-bold text-slate-500">
                       No release completion reports found for the selected filters.
                     </td>
                   </tr>
@@ -582,6 +591,9 @@ const AdminReports = () => {
                 <ReportDetail label="Load Status" value={selectedReportRow.data.containerLoadStatus || "Unknown"} capitalize />
                 <ReportDetail label="Classification" value={selectedReportRow.data.rateType} capitalize />
                 <ReportDetail label="Billing Days" value={selectedReportRow.data.billingDays || 0} />
+                <ReportDetail label="Gate-In Payment" value={formatCurrency(selectedReportRow.data.gateInPaymentTotal)} />
+                <ReportDetail label="Gate-Out Payment" value={formatCurrency(selectedReportRow.data.gateOutPaymentTotal)} />
+                <ReportDetail label="Total Billing" value={formatCurrency(selectedReportRow.data.totalBillingAmount)} emphasis />
                 <ReportDetail label="Subtotal" value={formatCurrency(selectedReportRow.data.billingSubtotal)} />
                 <ReportDetail label="VAT" value={formatCurrency(selectedReportRow.data.vatAmount)} />
                 <ReportDetail label="Recorded Revenue" value={formatCurrency(selectedReportRow.data.revenueTotal)} emphasis />

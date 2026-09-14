@@ -11,6 +11,7 @@ import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
 import { api, getApiError } from "../../lib/api"
 import { printBookingDocument } from "../../lib/printDocument"
+import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const money = (value) => `PHP ${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const formatDate = (value) => value ? new Date(value).toLocaleString("en-PH") : "-"
@@ -151,6 +152,7 @@ const AdminPaymentHistory = ({ mode = "history" }) => {
                 <th className="px-4 py-3">Transaction</th>
                 <th className="px-4 py-3">Client / Container</th>
                 <th className="px-4 py-3">Payment</th>
+                <th className="px-4 py-3">Billing Stage</th>
                 <th className="px-4 py-3">Tax Type</th>
                 <th className="px-4 py-3">Amount</th>
                 <th className="px-4 py-3">Receipt</th>
@@ -158,11 +160,13 @@ const AdminPaymentHistory = ({ mode = "history" }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
+              {loading && filtered.length === 0 && <TableLoadingRow colSpan={8} rows={6} actionColumn label="Loading payment history" />}
               {pagination.paginatedItems.map((item) => (
                 <tr key={item.id} className="hover:bg-slate-50">
                   <td className="px-4 py-4"><p className="font-black text-emerald-700">{item.bookingReference}</p>{item.recordSource === "legacy_migration" && <span className="mt-2 inline-flex rounded-full bg-violet-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">Legacy</span>}<p className="text-xs text-slate-500">Payment {item.sequence || 1} • {formatDate(item.paymentDate)}</p></td>
                   <td className="px-4 py-4"><p className="font-bold text-slate-800">{item.clientName}</p><p className="text-xs text-slate-500">{item.containerNumber}</p><ContainerClassificationBadges loadStatus={item.containerLoadStatus} rateType={item.rateType} className="mt-2" compact /></td>
                   <td className="px-4 py-4"><p className="font-bold text-slate-700">{item.paymentType}</p><p className="text-xs text-slate-500">{item.paymentReferenceNumber || "Auto-generated"}</p></td>
+                  <td className="px-4 py-4"><span className={`rounded-full px-3 py-1 text-xs font-black ${item.paymentStage === "gate_in" ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700"}`}>{item.paymentStage === "gate_in" ? "Gate-In Payment" : "Gate-Out Payment"}</span></td>
                   <td className="px-4 py-4"><span className={`rounded-full px-3 py-1 text-xs font-black ${item.isVatApplicable ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>{item.isVatApplicable ? "VAT" : "Non-VAT"}</span></td>
                   <td className="px-4 py-4"><p className="font-black text-slate-900">{money(item.total)}</p>{Number(item.grossBillingTotal || 0) !== Number(item.total || 0) && <p className="text-xs font-semibold text-slate-500">Gross bill: {money(item.grossBillingTotal)}</p>}</td>
                   <td className="px-4 py-4"><p className="font-bold text-slate-700">{item.receiptNumber || "Pending"}</p><p className="text-xs text-slate-500">{item.receiptType === "acknowledgement_receipt" ? "Acknowledgement Receipt" : "Official Receipt"}</p></td>
@@ -195,7 +199,7 @@ const AdminPaymentHistory = ({ mode = "history" }) => {
                   </td>
                 </tr>
               ))}
-              {!loading && filtered.length === 0 && <tr><td colSpan="7" className="px-4 py-14 text-center font-semibold text-slate-500">No finished transactions found.</td></tr>}
+              {!loading && filtered.length === 0 && <tr><td colSpan="8" className="px-4 py-14 text-center font-semibold text-slate-500">No finished transactions found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -219,6 +223,7 @@ const AdminPaymentHistory = ({ mode = "history" }) => {
               <Detail label="Load Status" value={selectedTransaction.containerLoadStatus === "laden" ? "Laden" : selectedTransaction.containerLoadStatus === "empty" ? "Empty" : "Unknown"} />
               <Detail label="Rate Classification" value={selectedTransaction.rateType === "international" ? "International" : "Local"} />
               <Detail label="Payment Type" value={selectedTransaction.paymentType} />
+              <Detail label="Billing Stage" value={selectedTransaction.paymentStage === "gate_in" ? "Gate-In Payment" : "Gate-Out Payment"} />
               <Detail label="Payment Date" value={formatDate(selectedTransaction.paymentDate)} />
               <Detail label="Payment Reference" value={selectedTransaction.paymentReferenceNumber || "Auto-generated"} />
               <Detail label="Tax Type" value={selectedTransaction.isVatApplicable ? "VAT" : "Non-VAT"} />

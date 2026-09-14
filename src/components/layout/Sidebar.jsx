@@ -22,6 +22,7 @@ import {
   FiCreditCard,
   FiCornerDownRight,
   FiActivity,
+  FiCalendar,
 } from "react-icons/fi";
 import logo from "../../assets/logo.png";
 import { useAuthStore } from "../../stores/authStore";
@@ -121,6 +122,7 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
           icon: FiCreditCard,
         },
         { name: "Gate-out", path: "/billing/gate-out", icon: FiCornerDownRight },
+        { name: "Gate-out calendar", path: "/billing/gate-out-calendar", icon: FiCalendar, allowedRoles: ["super_admin"] },
         { name: "Release Container", path: "/billing/release-container", icon: FiLogOut },
         {
           name: "Payment history",
@@ -171,6 +173,7 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
     "/billing/payment-verification": "billing",
     "/billing/release-container": "billing",
     "/billing/gate-out": "billing",
+    "/billing/gate-out-calendar": "billing",
     "/billing/payment-history": "billing",
     "/reports/analytics": "reports",
     "/reports/audit-logs": "reports",
@@ -283,6 +286,7 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
               <NavLink
                 key={child.path}
                 to={child.path}
+                end={child.path === "/billing/gate-out"}
                 onClick={() => isMobileOpen && onClose()}
                 aria-current={
                   location.pathname === child.path ? "page" : undefined
