@@ -13,6 +13,7 @@ import ModalCloseButton from "../../components/ui/ModalCloseButton"
 import Pagination from "../../components/ui/Pagination"
 import TableCrudActions from "../../components/ui/TableCrudActions"
 import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import AdminSpecialRates from "./AdminSpecialRates"
 import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
 import { api, getApiError } from "../../lib/api"
@@ -102,6 +103,34 @@ const formatDate = (value) => {
   return date.toLocaleString()
 }
 
+const getManilaDateInputValue = (value = new Date()) => {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+const addDaysToDateInput = (dateValue, days = 1) => {
+  const match = String(dateValue || "").match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return getManilaDateInputValue()
+  const next = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days))
+  return next.toISOString().slice(0, 10)
+}
+
+const toEffectiveDateIso = (dateValue) => dateValue ? `${dateValue}T00:00:00+08:00` : ""
+
+const getDefaultEditEffectivity = (rate) => {
+  const today = getManilaDateInputValue()
+  const currentEffectiveDate = getManilaDateInputValue(rate?.effectiveDate)
+  return currentEffectiveDate && currentEffectiveDate >= today ? addDaysToDateInput(currentEffectiveDate, 1) : today
+}
+
 const normalizeValue = (value) => String(value || "").trim().replace(/\s+/g, " ").toLowerCase()
 const getUnitLabel = (rate) => rate?.unitLabel || fallbackUnitLabels[rate?.unit] || rate?.unit || "-"
 const getRateType = (rate) => rate?.rateType === "international" ? "international" : "local"
@@ -139,22 +168,24 @@ const getStandardUnit = (chargeType, containerSize) => {
 
 const getStandardDescription = (chargeType) => getChargeOption(chargeType)?.billingDescription || ""
 
-const initialForm = {
+const getInitialForm = () => ({
   chargeType: "lift_on",
   containerSize: "20",
   loadStatus: "empty",
   description: "",
   unit: "",
   rateAmount: "",
-}
+  effectiveDate: getManilaDateInputValue(),
+})
 
 const AdminRateSetup = () => {
   const [rates, setRates] = useState([])
+  const [scheduledRates, setScheduledRates] = useState([])
   const [activeRateType, setActiveRateType] = useState("local")
   const [filters, setFilters] = useState({ search: "", chargeType: "all", containerSize: "all", loadStatus: "all" })
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
-  const [form, setForm] = useState(initialForm)
+  const [form, setForm] = useState(getInitialForm)
   const [editingRate, setEditingRate] = useState(null)
   const [selectedRate, setSelectedRate] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -168,6 +199,7 @@ const AdminRateSetup = () => {
       setLoading(true)
       const { data } = await api.get("/admin/billing-rates")
       setRates((data.rates || []).filter((rate) => rate.billingScope !== "optional_stripping_stuffing"))
+      setScheduledRates((data.scheduledRates || []).filter((rate) => rate.billingScope !== "optional_stripping_stuffing"))
     } catch (error) {
       setAlert({ type: "error", message: getApiError(error) })
     } finally {
@@ -189,6 +221,11 @@ const AdminRateSetup = () => {
   const selectedTypeRates = useMemo(
     () => rates.filter((rate) => getRateType(rate) === activeRateType),
     [activeRateType, rates],
+  )
+
+  const selectedScheduledRates = useMemo(
+    () => scheduledRates.filter((rate) => getRateType(rate) === activeRateType),
+    [activeRateType, scheduledRates],
   )
 
   const coreConfiguration = useMemo(() => coreChargeTypes.map((chargeType) => {
@@ -243,7 +280,7 @@ const AdminRateSetup = () => {
     const chargeType = preset.chargeType || "lift_on"
     setEditingRate(null)
     setForm({
-      ...initialForm,
+      ...getInitialForm(),
       chargeType,
       containerSize: preset.containerSize || "20",
       loadStatus: preset.loadStatus || (isLoadSpecificCharge(chargeType) ? "empty" : "all"),
@@ -264,6 +301,7 @@ const AdminRateSetup = () => {
       description: rate.description || "",
       unit: getUnitLabel(rate),
       rateAmount: String(rate.rateAmount ?? ""),
+      effectiveDate: getDefaultEditEffectivity(rate),
     })
     setFormError("")
     setModalOpen(true)
@@ -273,7 +311,7 @@ const AdminRateSetup = () => {
     if (saving) return
     setModalOpen(false)
     setEditingRate(null)
-    setForm(initialForm)
+    setForm(getInitialForm())
     setFormError("")
   }
 
@@ -293,6 +331,11 @@ const AdminRateSetup = () => {
 
     if (!description || !unit || !Number.isFinite(rateAmount) || rateAmount <= 0) {
       setFormError("Please complete the charge configuration and enter a valid Rate (PHP).")
+      return
+    }
+
+    if (!form.effectiveDate) {
+      setFormError("Select the effectivity date for this rate.")
       return
     }
 
@@ -328,23 +371,25 @@ const AdminRateSetup = () => {
       rateAmount,
       rateType,
       loadStatus,
+      effectiveDate: toEffectiveDateIso(form.effectiveDate),
     }
 
     try {
       setSaving(true)
       setFormError("")
       setAlert({ type: "", message: "" })
-      if (editingRate) await api.patch(`/admin/billing-rates/${editingRate.id}`, payload)
-      else await api.post("/admin/billing-rates", payload)
+      const response = editingRate
+        ? await api.patch(`/admin/billing-rates/${editingRate.id}`, payload)
+        : await api.post("/admin/billing-rates", payload)
       setAlert({
         type: "success",
-        message: editingRate
-          ? `${getRateTypeLabel(rateType)} ${getChargeLabel(chargeType)} rate saved as a new version.`
-          : `${getRateTypeLabel(rateType)} ${getChargeLabel(chargeType)} rate added.`,
+        message: response.data?.message || (editingRate
+          ? `${getRateTypeLabel(rateType)} ${getChargeLabel(chargeType)} rate saved with effectivity ${form.effectiveDate}.`
+          : `${getRateTypeLabel(rateType)} ${getChargeLabel(chargeType)} rate added with effectivity ${form.effectiveDate}.`),
       })
       setModalOpen(false)
       setEditingRate(null)
-      setForm(initialForm)
+      setForm(getInitialForm())
       await loadRates()
     } catch (error) {
       const message = getApiError(error)
@@ -358,10 +403,14 @@ const AdminRateSetup = () => {
   const deleteRate = async (rate) => {
     const rateTypeLabel = getRateTypeLabel(getRateType(rate))
     const chargeLabel = getChargeLabel(getChargeType(rate))
-    if (!window.confirm(`Deactivate this ${rateTypeLabel.toLowerCase()} ${chargeLabel} rate? Historical transactions will remain unchanged.`)) return
+    const isScheduled = new Date(rate.effectiveDate).getTime() > Date.now()
+    const confirmation = isScheduled
+      ? `Cancel the scheduled ${rateTypeLabel.toLowerCase()} ${chargeLabel} rate effective ${getManilaDateInputValue(rate.effectiveDate)}? The current rate will continue.`
+      : `Deactivate this ${rateTypeLabel.toLowerCase()} ${chargeLabel} rate? Historical rate periods will remain unchanged.`
+    if (!window.confirm(confirmation)) return
     try {
-      await api.delete(`/admin/billing-rates/${rate.id}`)
-      setAlert({ type: "success", message: `${rateTypeLabel} ${chargeLabel} rate deactivated.` })
+      const { data } = await api.delete(`/admin/billing-rates/${rate.id}`)
+      setAlert({ type: "success", message: data.message || (isScheduled ? "Scheduled rate change cancelled." : `${rateTypeLabel} ${chargeLabel} rate deactivated.`) })
       await loadRates()
     } catch (error) {
       setAlert({ type: "error", message: getApiError(error) })
@@ -385,7 +434,7 @@ const AdminRateSetup = () => {
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">Billing Management</div>
             <h2 className="mt-1 text-2xl font-black text-slate-950">Rate Setup</h2>
             <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-500">
-              Maintain separate Local and International rates for Lift On, Lift Off, and Storage. Each charge can have independent Empty and Loaded rates for 20ft and 40ft containers.
+              Maintain separate Local and International rates for Lift On, Lift Off, and Storage. Every new or changed rate requires an effectivity date; the prior rate remains valid before that date.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -433,6 +482,8 @@ const AdminRateSetup = () => {
         </div>
       </section>
 
+      <AdminSpecialRates generalRates={rates} />
+
       <section className="card overflow-hidden">
         <div className="border-b border-slate-200 bg-white p-5">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -465,6 +516,39 @@ const AdminRateSetup = () => {
             ))}
           </div>
         </div>
+
+        {selectedScheduledRates.length > 0 && (
+          <div className="border-b border-amber-200 bg-amber-50/70 p-5">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wide text-amber-700">Scheduled Rate Changes</p>
+                <h3 className="mt-1 text-base font-black text-slate-950">Upcoming {activeRateTypeLabel} effectivity dates</h3>
+                <p className="mt-1 text-sm font-semibold text-slate-600">The current rate stays applicable until each scheduled effectivity date.</p>
+              </div>
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">{selectedScheduledRates.length} scheduled</span>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              {selectedScheduledRates.map((rate) => (
+                <div key={rate.id} className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="font-black text-slate-950">{getChargeLabel(getChargeType(rate))} • {getLoadStatusLabel(getLoadStatus(rate))} • {getContainerSize(rate) === "all" ? "All sizes" : `${getContainerSize(rate)}ft`}</p>
+                      <p className="mt-1 text-sm font-bold text-emerald-700">{formatMoney(rate.rateAmount)} PHP</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">Effective {getManilaDateInputValue(rate.effectiveDate)} • Version {rate.version || 1}</p>
+                    </div>
+                    <TableCrudActions
+                      recordLabel="scheduled rate"
+                      onView={() => setSelectedRate(rate)}
+                      editDisabled
+                      onDelete={() => deleteRate(rate)}
+                      deleteLabel="Cancel scheduled rate"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="relative flex-1 lg:max-w-xl">
@@ -520,7 +604,7 @@ const AdminRateSetup = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-[1020px] w-full text-left text-sm">
+          <table className="min-w-[1140px] w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs font-black uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-5 py-4">Charge</th>
@@ -528,11 +612,12 @@ const AdminRateSetup = () => {
                 <th className="px-5 py-4">Size</th>
                 <th className="px-5 py-4">Unit</th>
                 <th className="px-5 py-4">Rate (PHP)</th>
+                <th className="px-5 py-4">Effective From</th>
                 <th className="px-5 py-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {loading && rates.length === 0 && <TableLoadingRow colSpan={6} rows={6} actionColumn label="Loading billing rates" />}
+              {loading && rates.length === 0 && <TableLoadingRow colSpan={7} rows={6} actionColumn label="Loading billing rates" />}
               {pagination.paginatedItems.map((rate) => {
                 const chargeType = getChargeType(rate)
                 const loadStatus = getLoadStatus(rate)
@@ -551,6 +636,7 @@ const AdminRateSetup = () => {
                     <td className="px-5 py-4 font-black text-slate-800">{size === "all" ? "All sizes" : `${size}ft`}</td>
                     <td className="px-5 py-4 font-semibold text-slate-600">{getUnitLabel(rate)}</td>
                     <td className="px-5 py-4 text-lg font-black text-slate-950">{formatMoney(rate.rateAmount)}</td>
+                    <td className="px-5 py-4 text-sm font-bold text-slate-600">{getManilaDateInputValue(rate.effectiveDate)}</td>
                     <td className="px-5 py-4">
                       <TableCrudActions
                         recordLabel={`${getRateTypeLabel(getRateType(rate))} ${getChargeLabel(chargeType)} rate`}
@@ -562,7 +648,7 @@ const AdminRateSetup = () => {
                   </tr>
                 )
               })}
-              {!loading && filteredRates.length === 0 && <tr><td colSpan="6" className="px-5 py-16 text-center font-semibold text-slate-500">No {activeRateTypeLabel.toLowerCase()} billing rates found.</td></tr>}
+              {!loading && filteredRates.length === 0 && <tr><td colSpan="7" className="px-5 py-16 text-center font-semibold text-slate-500">No {activeRateTypeLabel.toLowerCase()} billing rates found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -600,7 +686,7 @@ const AdminRateSetup = () => {
               <div>
                 <p className="text-xs font-black uppercase tracking-wide text-emerald-700">{activeRateTypeLabel} Rate Setup</p>
                 <h2 className="mt-1 text-2xl font-black text-slate-950">{editingRate ? `Edit ${activeRateTypeLabel} Rate` : `Add ${activeRateTypeLabel} Rate`}</h2>
-                <p className="mt-1 text-sm text-slate-500">Configure the charge, Empty/Loaded classification, container size, and amount independently.</p>
+                <p className="mt-1 text-sm text-slate-500">Configure the charge, Empty/Loaded classification, amount, and the exact date the new rate becomes effective.</p>
               </div>
               <ModalCloseButton onClick={closeModal} label="Close rate form" />
             </div>
@@ -691,7 +777,20 @@ const AdminRateSetup = () => {
                 </label>
               </div>
 
-              {editingRate && <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold leading-6 text-blue-800">Saving an edit creates a new effective rate version. Existing and previous transactions keep the exact rate snapshot that was used when they were billed.</div>}
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Effectivity Date</span>
+                <input
+                  className="input"
+                  type="date"
+                  min={getManilaDateInputValue()}
+                  value={form.effectiveDate}
+                  onChange={(event) => { setForm((current) => ({ ...current, effectiveDate: event.target.value })); setFormError("") }}
+                  required
+                />
+                <span className="mt-1.5 block text-xs font-semibold text-slate-400">The previous rate applies before this date. The new rate starts at 12:00 AM Philippine Time on this date.</span>
+              </label>
+
+              {editingRate && <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold leading-6 text-blue-800">Saving an edit creates a new effective rate version. Ongoing transactions are split by effectivity date: older service days retain the old rate and service days from the new effectivity date use the new rate.</div>}
               {formError && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{formError}</div>}
             </div>
 

@@ -5,7 +5,6 @@ import { api, getApiError, resolveFileUrl } from "../../lib/api";
 import Pagination from "../../components/ui/Pagination";
 import TableCrudActions from "../../components/ui/TableCrudActions";
 import WorkflowDecisionPanel from "../../components/ui/WorkflowDecisionPanel";
-import { usePagination } from "../../hooks/usePagination";
 import { useClickOutside } from "../../hooks/useClickOutside";
 import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
@@ -55,6 +54,10 @@ const AdminClients = () => {
   const [clientForm, setClientForm] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [listLoading, setListLoading] = useState(true);
+  const [clientPage, setClientPage] = useState(1);
+  const [clientPageSize, setClientPageSize] = useState(10);
+  const [clientMeta, setClientMeta] = useState({ total: 0, totalPages: 1 });
+  const clientRequestRef = useRef(null);
 
 
   useClickOutside(filterRef, () => setShowFilters(false), showFilters);
@@ -69,56 +72,49 @@ const AdminClients = () => {
     };
   }, [clients]);
 
-  const filteredClients = useMemo(() => {
-    const keyword = searchTerm.trim().toLowerCase();
-
-    return clients.filter((client) => {
-      const matchesSearch =
-        !keyword ||
-        [
-          client.companyName,
-          client.companyAddress,
-          client.companyType,
-          client.companyTypeOther,
-          client.name,
-          client.representativePosition,
-          client.email,
-          client.phoneNumber,
-          client.status,
-          client.rejectionReason,
-        ]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(keyword));
-
-      const matchesFilter =
-        (selectedFilters.includes("pending") &&
-          isPendingStatus(client.status)) ||
-        (selectedFilters.includes("verified") &&
-          isVerifiedStatus(client.status)) ||
-        (selectedFilters.includes("rejected") &&
-          isRejectedStatus(client.status));
-
-      return matchesSearch && matchesFilter;
-    });
-  }, [clients, searchTerm, selectedFilters]);
-
-  const clientPagination = usePagination(filteredClients, 10);
+  const filteredClients = clients;
+  const clientPagination = {
+    page: clientPage,
+    setPage: setClientPage,
+    pageSize: clientPageSize,
+    setPageSize: (value) => { setClientPageSize(Number(value)); setClientPage(1); },
+    totalItems: clientMeta.total,
+    totalPages: Math.max(clientMeta.totalPages || 1, 1),
+    startItem: clientMeta.total ? ((clientPage - 1) * clientPageSize) + 1 : 0,
+    endItem: Math.min(clientPage * clientPageSize, clientMeta.total || 0),
+    pageSizeOptions: [10, 20, 50, 100],
+    paginatedItems: clients,
+  };
 
   const loadClients = async () => {
+    clientRequestRef.current?.abort();
+    const controller = new AbortController();
+    clientRequestRef.current = controller;
     try {
       setListLoading(true);
-      const { data } = await api.get("/admin/client-registrations");
+      const statuses = [];
+      if (selectedFilters.includes("pending")) statuses.push("pending", "resubmitted");
+      if (selectedFilters.includes("verified")) statuses.push("verified", "active");
+      if (selectedFilters.includes("rejected")) statuses.push("rejected");
+      const { data } = await api.get("/admin/client-registrations", {
+        params: { page: clientPage, limit: clientPageSize, search: searchTerm.trim(), status: statuses.length ? statuses.join(",") : "__none__" },
+        signal: controller.signal,
+      });
       setClients(data.users || []);
+      setClientMeta(data.pagination || { total: 0, totalPages: 1 });
     } catch (err) {
-      setError(getApiError(err));
+      if (err?.code !== "ERR_CANCELED") setError(getApiError(err));
     } finally {
-      setListLoading(false);
+      if (clientRequestRef.current === controller) setListLoading(false);
     }
   };
 
   useEffect(() => {
-    loadClients();
-  }, []);
+    const timer = setTimeout(loadClients, 250);
+    return () => clearTimeout(timer);
+  }, [clientPage, clientPageSize, searchTerm, selectedFilters]);
+
+  useEffect(() => { setClientPage(1); }, [searchTerm, selectedFilters]);
 
   const toggleFilter = (value) => {
     setSelectedFilters((prev) =>
@@ -390,7 +386,7 @@ const AdminClients = () => {
         </div>
 
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">
-          Showing {filteredClients.length} of {clients.length} client
+          Showing {clientPagination.startItem}-{clientPagination.endItem} of {clientPagination.totalItems} client
           registrations
         </div>
 

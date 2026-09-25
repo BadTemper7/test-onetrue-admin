@@ -25,7 +25,6 @@ import TableCrudActions from "../../components/ui/TableCrudActions"
 import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
 import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
 import { useClickOutside } from "../../hooks/useClickOutside"
-import { usePagination } from "../../hooks/usePagination"
 import { api, getApiError } from "../../lib/api"
 import { useAuthStore } from "../../stores/authStore"
 import { hasModulePermission } from "../../lib/permissions"
@@ -160,6 +159,10 @@ const AdminBookings = () => {
   const [scheduleOverflowCount, setScheduleOverflowCount] = useState(0)
   const [scheduleLoading, setScheduleLoading] = useState(true)
   const [scheduleAlert, setScheduleAlert] = useState({ type: "", message: "" })
+  const [bookingPage, setBookingPage] = useState(1)
+  const [bookingPageSize, setBookingPageSize] = useState(10)
+  const [bookingMeta, setBookingMeta] = useState({ total: 0, totalPages: 1 })
+  const bookingRequestRef = useRef(null)
   const filterRef = useRef(null)
   const user = useAuthStore((state) => state.user)
   const navigate = useNavigate()
@@ -170,6 +173,9 @@ const AdminBookings = () => {
   useClickOutside(filterRef, () => setShowFilters(false), showFilters)
 
   const loadBookings = async () => {
+    bookingRequestRef.current?.abort()
+    const controller = new AbortController()
+    bookingRequestRef.current = controller
     try {
       setLoading(true)
       setAlert({ type: "", message: "" })
@@ -181,17 +187,20 @@ const AdminBookings = () => {
       if (filters.rateType !== "all") params.set("rateType", filters.rateType)
       if (filters.recordSource !== "all") params.set("recordSource", filters.recordSource)
       if (filters.clientId !== "all") params.set("clientId", filters.clientId)
+      params.set("page", String(bookingPage))
+      params.set("limit", String(bookingPageSize))
 
       const [{ data }, summaryResponse] = await Promise.all([
-        api.get(`/admin/bookings?${params.toString()}`),
+        api.get(`/admin/bookings?${params.toString()}`, { signal: controller.signal }),
         api.get("/admin/bookings/summary").catch(() => ({ data: { summary: {} } })),
       ])
       setBookings(data.bookings || [])
+      setBookingMeta(data.pagination || { total: 0, totalPages: 1 })
       setSummary(summaryResponse.data.summary || {})
     } catch (error) {
-      setAlert({ type: "error", message: getApiError(error) })
+      if (error?.code !== "ERR_CANCELED") setAlert({ type: "error", message: getApiError(error) })
     } finally {
-      setLoading(false)
+      if (bookingRequestRef.current === controller) setLoading(false)
     }
   }
 
@@ -230,9 +239,12 @@ const AdminBookings = () => {
   }
 
   useEffect(() => {
-    loadBookings()
+    const timer = setTimeout(loadBookings, filters.search.trim() ? 250 : 0)
+    return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.status, filters.billingStatus, filters.loadStatus, filters.rateType, filters.recordSource, filters.clientId])
+  }, [bookingPage, bookingPageSize, filters.status, filters.billingStatus, filters.loadStatus, filters.rateType, filters.recordSource, filters.clientId, filters.search])
+
+  useEffect(() => { setBookingPage(1) }, [filters.status, filters.billingStatus, filters.loadStatus, filters.rateType, filters.recordSource, filters.clientId, filters.search])
 
   useEffect(() => {
     loadClients()
@@ -334,7 +346,14 @@ const AdminBookings = () => {
     completed: summary.completed ?? bookings.filter((item) => item.status === "completed_gate_out_done").length,
   }), [bookings, summary])
 
-  const pagination = usePagination(bookings, 10, `${filters.status}|${filters.billingStatus}|${filters.loadStatus}|${filters.rateType}|${filters.recordSource}|${filters.clientId}|${filters.search}`)
+  const pagination = {
+    page: bookingPage, setPage: setBookingPage, pageSize: bookingPageSize,
+    setPageSize: (value) => { setBookingPageSize(Number(value)); setBookingPage(1) },
+    totalItems: bookingMeta.total, totalPages: Math.max(bookingMeta.totalPages || 1, 1),
+    startItem: bookingMeta.total ? ((bookingPage - 1) * bookingPageSize) + 1 : 0,
+    endItem: Math.min(bookingPage * bookingPageSize, bookingMeta.total || 0),
+    pageSizeOptions: [10, 20, 50, 100], paginatedItems: bookings,
+  }
   const printAvailability = selectedBooking ? {
     gateIn: Boolean(selectedBooking.gateInApprovedAt && selectedBooking.gateInPassNumber),
     gateOut: Boolean(selectedBooking.gateOutApprovedAt && selectedBooking.gateOutPassNumber),

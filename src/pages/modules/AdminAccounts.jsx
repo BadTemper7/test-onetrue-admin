@@ -63,6 +63,10 @@ const AdminAccounts = () => {
   const [selectedUser, setSelectedUser] = useState(null)
   const [isEditingUser, setIsEditingUser] = useState(false)
   const [editUserForm, setEditUserForm] = useState(null)
+  const [adminPage, setAdminPage] = useState(1)
+  const [adminPageSize, setAdminPageSize] = useState(10)
+  const [adminMeta, setAdminMeta] = useState({ total: 0, totalPages: 1 })
+  const adminRequestRef = useRef(null)
 
   const statusOptions = useMemo(
     () => [...new Set(users.map((user) => user.status).filter(Boolean))].sort(),
@@ -80,46 +84,48 @@ const AdminAccounts = () => {
     [users],
   )
 
-  const filteredUsers = useMemo(() => {
-    const keyword = searchTerm.trim().toLowerCase()
+  const filteredUsers = users
 
-    return users.filter((user) => {
-      const matchesSearch =
-        !keyword ||
-        [user.name, user.email, user.role, user.status]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(keyword))
-
-      const matchesRole = selectedRoles.includes(user.role)
-      const matchesStatus =
-        selectedStatuses.length === 0 || selectedStatuses.includes(user.status)
-
-      return matchesSearch && matchesRole && matchesStatus
-    })
-  }, [users, searchTerm, selectedRoles, selectedStatuses])
-
-  const adminPagination = usePagination(
-    filteredUsers,
-    10,
-    `${searchTerm}-${selectedRoles.join("|")}-${selectedStatuses.join("|")}`,
-  )
+  const adminPagination = {
+    page: adminPage,
+    setPage: setAdminPage,
+    pageSize: adminPageSize,
+    setPageSize: (value) => { setAdminPageSize(Number(value)); setAdminPage(1) },
+    totalItems: adminMeta.total,
+    totalPages: Math.max(adminMeta.totalPages || 1, 1),
+    startItem: adminMeta.total ? ((adminPage - 1) * adminPageSize) + 1 : 0,
+    endItem: Math.min(adminPage * adminPageSize, adminMeta.total || 0),
+    pageSizeOptions: [10, 20, 50, 100],
+    paginatedItems: users,
+  }
   const permissionPagination = usePagination(modules, 8, form.role)
 
   const loadAdmins = async () => {
+    adminRequestRef.current?.abort()
+    const controller = new AbortController()
+    adminRequestRef.current = controller
     try {
       setListLoading(true)
-      const { data } = await api.get("/admin/users?userType=admin")
+      const params = { userType: "admin", page: adminPage, limit: adminPageSize, search: searchTerm.trim() }
+      if (selectedRoles.length === 0) params.role = "__none__"
+      else if (selectedRoles.length !== roleOptions.length) params.role = selectedRoles.join(",")
+      if (selectedStatuses.length) params.status = selectedStatuses.join(",")
+      const { data } = await api.get("/admin/users", { params, signal: controller.signal })
       setUsers(data.users || [])
+      setAdminMeta(data.pagination || { total: 0, totalPages: 1 })
     } catch (err) {
-      setError(getApiError(err))
+      if (err?.code !== "ERR_CANCELED") setError(getApiError(err))
     } finally {
-      setListLoading(false)
+      if (adminRequestRef.current === controller) setListLoading(false)
     }
   }
 
   useEffect(() => {
-    loadAdmins()
-  }, [])
+    const timer = setTimeout(loadAdmins, 250)
+    return () => clearTimeout(timer)
+  }, [adminPage, adminPageSize, searchTerm, selectedRoles, selectedStatuses])
+
+  useEffect(() => { setAdminPage(1) }, [searchTerm, selectedRoles, selectedStatuses])
 
   const updatePermission = (moduleName, action, checked) => {
     setForm((prev) => {
@@ -440,7 +446,7 @@ const AdminAccounts = () => {
         </div>
 
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">
-          Showing {filteredUsers.length} of {users.length} dashboard accounts
+          Showing {adminPagination.startItem}-{adminPagination.endItem} of {adminPagination.totalItems} dashboard accounts
         </div>
 
         <div className="overflow-x-auto">
