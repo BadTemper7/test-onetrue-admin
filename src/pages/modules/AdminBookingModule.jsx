@@ -159,19 +159,19 @@ const hasExistingOnlinePayment = (booking = {}) => {
 const hasApprovedPayment = (booking = {}) => booking.billingStatus === "paid_approved"
 
 const getCashPaymentDisabledReason = (booking = {}) => {
-  const isGateInPayment = booking.status === "approved_area_assigned" && booking.loloPaymentStage !== "gate_out"
+  const isGateInPayment = booking.status === "approved_area_assigned" && (booking.isCMASpecialClient || booking.loloPaymentStage !== "gate_out")
   const isGateOutPayment = ["gate_out_requested", "gate_out_approved"].includes(booking.status)
 
-  if (booking.status === "approved_area_assigned" && booking.loloPaymentStage === "gate_out") {
+  if (booking.status === "approved_area_assigned" && booking.loloPaymentStage === "gate_out" && !booking.isCMASpecialClient) {
     return "LOLO payment is configured for Gate-Out for this booking. No Gate-In payment is required."
   }
 
   if (!isGateInPayment && !isGateOutPayment) {
-    return "Cash payment is available only for Gate-In LOLO when configured for Gate-In, or an active Gate-Out balance."
+    return "Cash payment is available only for a required Gate-In client charge or an active Gate-Out balance."
   }
 
   if (isGateInPayment && booking.billingStatus === "paid_approved" && Number(booking.paymentBalanceDue || 0) <= 0) {
-    return "Cash payment is disabled because the Gate-In LOLO transaction is already paid."
+    return booking.isCMASpecialClient ? "Cash payment is disabled because the Gate-In Documentation Fee is already paid." : "Cash payment is disabled because the Gate-In LOLO transaction is already paid."
   }
 
   // Once the Gate-Out transaction is fully paid / approved, payment is locked.
@@ -191,7 +191,7 @@ const getCashPaymentDisabledReason = (booking = {}) => {
 
   if (Number(booking.billingSubtotal || booking.billingTotal || 0) <= 0) {
     return isGateInPayment
-      ? "Cash payment is unavailable until Gate-In Lift On / Lift Off billing is computed."
+      ? (booking.isCMASpecialClient ? "Cash payment is unavailable until the Gate-In Documentation Fee is computed." : "Cash payment is unavailable until Gate-In Lift On / Lift Off billing is computed.")
       : "Cash payment is unavailable until Gate-Out billing has been computed."
   }
 
@@ -398,7 +398,8 @@ const AdminBookingModule = ({ mode }) => {
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
   const [filters, setFilters] = useState({ status: config.defaultStatus, billingStatus: config.defaultBillingStatus, loadStatus: "all", rateType: "all", search: "" })
-  const [approval, setApproval] = useState({ areaId: "", blockId: "", bay: "", row: "", tier: "", loloPaymentStage: "gate_out" })
+  const [approval, setApproval] = useState({ areaId: "", blockId: "", bay: "", row: "", tier: "", loloPaymentStage: "gate_out", cmaClientId: "" })
+  const [cmaClients, setCmaClients] = useState([])
   const [gateIn, setGateIn] = useState(initialGateIn)
   const [gateInDetails, setGateInDetails] = useState(initialGateInDetails)
   const [releaseConditions, setReleaseConditions] = useState({ gateOutConditions: [], gateOutConditionOther: "" })
@@ -421,6 +422,14 @@ const AdminBookingModule = ({ mode }) => {
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState("")
   const [alert, setAlert] = useState({ type: "", message: "" })
+
+  useEffect(() => {
+    let active = true
+    api.get("/admin/cma/clients?status=active")
+      .then(({ data }) => { if (active) setCmaClients(data.cmaClients || []) })
+      .catch(() => { if (active) setCmaClients([]) })
+    return () => { active = false }
+  }, [])
   const user = useAuthStore((state) => state.user)
   const canDeleteBooking = hasModulePermission(user, "operations", "delete")
   const bookingsRequestRef = useRef({ key: "", promise: null })
@@ -706,6 +715,7 @@ const AdminBookingModule = ({ mode }) => {
       row: selectedBooking.assignedRow || "",
       tier: selectedBooking.assignedTier || "",
       loloPaymentStage: selectedBooking.loloPaymentStage === "gate_in" ? "gate_in" : "gate_out",
+      cmaClientId: selectedBooking.cmaClient || "",
     })
 
     const normalizedGateInConditions = normalizeConditionSelections(selectedBooking.gateInConditions)
@@ -769,8 +779,9 @@ const AdminBookingModule = ({ mode }) => {
   }, [cashBooking?.id])
 
   useEffect(() => {
-    if (config.primarySection !== "approval" || !isPreAdviceApprovalMode || !selectedBooking?.id) {
+    if (config.primarySection !== "approval" || !isPreAdviceApprovalMode || !selectedBooking?.id || selectedBooking?.isCMASpecialClient || approval.cmaClientId) {
       setCongestionOption(null)
+      setCongestionLoading(false)
       return
     }
     let active = true
@@ -786,7 +797,7 @@ const AdminBookingModule = ({ mode }) => {
         if (active) setCongestionLoading(false)
       })
     return () => { active = false }
-  }, [bookingBasePath, config.primarySection, isPreAdviceApprovalMode, selectedBooking?.id, selectedBooking?.updatedAt, blocks])
+  }, [bookingBasePath, config.primarySection, isPreAdviceApprovalMode, selectedBooking?.id, selectedBooking?.updatedAt, selectedBooking?.isCMASpecialClient, approval.cmaClientId, blocks])
 
   useEffect(() => {
     if (config.primarySection === "approval" && !isPreAdviceApprovalMode) loadBlocks(approval.areaId)
@@ -1630,7 +1641,7 @@ const AdminBookingModule = ({ mode }) => {
                 approveLabel="Approve / Assign"
                 approveIcon={MapPinned}
                 onApprove={approveBooking}
-                approveDisabled={saving || selectedBooking.status !== "pending_admin_approval" || !approval.areaId || !approval.blockId || !hasSelectedSlot || selectedSlotTaken || selectedSlotOutOfBounds || !selectedBlockHasCapacity || slotsLoading || (selectedUsesCongestionArea && (regularYardHasSpace || congestionLoading || !congestionOption?.available))}
+                approveDisabled={saving || selectedBooking.status !== "pending_admin_approval" || !approval.areaId || !approval.blockId || !hasSelectedSlot || selectedSlotTaken || selectedSlotOutOfBounds || !selectedBlockHasCapacity || slotsLoading || (selectedUsesCongestionArea && !(selectedBooking.isCMASpecialClient || approval.cmaClientId) && (regularYardHasSpace || congestionLoading || !congestionOption?.available))}
                 rejectLabel={isPreAdviceApprovalMode ? "Reject Pre-Advice" : "Reject Booking"}
                 rejectReason={rejectReason}
                 onRejectReasonChange={setRejectReason}
@@ -1646,32 +1657,43 @@ const AdminBookingModule = ({ mode }) => {
               >
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="md:col-span-2">
-                    <Field label="LOLO Payment Collection" hint="Choose when Lift On / Lift Off will be collected for this booking. Storage and all other charges stay payable only at Gate-Out.">
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <label className={`cursor-pointer rounded-2xl border p-4 transition ${approval.loloPaymentStage === "gate_in" ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
-                          <input
-                            type="radio"
-                            name="loloPaymentStage"
-                            className="mr-2"
-                            checked={approval.loloPaymentStage === "gate_in"}
-                            onChange={() => setApproval((current) => ({ ...current, loloPaymentStage: "gate_in" }))}
-                          />
-                          <strong>Collect at Gate-In</strong>
-                          <p className="mt-1 text-xs font-semibold text-slate-500">LOLO must be fully paid and approved before Gate-In approval.</p>
-                        </label>
-                        <label className={`cursor-pointer rounded-2xl border p-4 transition ${approval.loloPaymentStage === "gate_out" ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
-                          <input
-                            type="radio"
-                            name="loloPaymentStage"
-                            className="mr-2"
-                            checked={approval.loloPaymentStage === "gate_out"}
-                            onChange={() => setApproval((current) => ({ ...current, loloPaymentStage: "gate_out" }))}
-                          />
-                          <strong>Collect at Gate-Out</strong>
-                          <p className="mt-1 text-xs font-semibold text-slate-500">Gate-In can proceed without LOLO payment. LOLO joins storage and other charges at Gate-Out.</p>
-                        </label>
-                      </div>
-                    </Field>
+                      <Field label="CMA Special Client" hint="Leave Automatic to use the trucker relationship or shipping-line mapping. Select a CMA client to tag this booking manually.">
+                        <select className="input" value={approval.cmaClientId} onChange={(event) => setApproval((current) => ({ ...current, cmaClientId: event.target.value }))}>
+                          <option value="">Automatic detection / no manual override</option>
+                          {cmaClients.map((client) => <option key={client.id} value={client.id}>{client.name} ({client.code})</option>)}
+                        </select>
+                      </Field>
+                      {(selectedBooking.isCMASpecialClient || approval.cmaClientId) && (
+                        <div className="mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900">
+                          <p className="font-black">CMA Special Client billing rules will apply.</p>
+                          <p className="mt-1 font-semibold">The trucker client pays Documentation Fee only. LOLO, storage, and other CMA yard charges are billed separately to CMA.</p>
+                        </div>
+                      )}
+                    </div>
+                  <div className="md:col-span-2">
+                    {(selectedBooking.isCMASpecialClient || approval.cmaClientId) ? (
+                      <Field label="LOLO / Storage Collection">
+                        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+                          <strong className="text-violet-900">Bill to CMA in the separate CMA Billing module</strong>
+                          <p className="mt-1 text-xs font-semibold text-violet-700">LOLO collection timing is not charged to the trucker client for CMA Special Client bookings.</p>
+                        </div>
+                      </Field>
+                    ) : (
+                      <Field label="LOLO Payment Collection" hint="Choose when Lift On / Lift Off will be collected for this booking. Storage and all other charges stay payable only at Gate-Out.">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className={`cursor-pointer rounded-2xl border p-4 transition ${approval.loloPaymentStage === "gate_in" ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                            <input type="radio" name="loloPaymentStage" className="mr-2" checked={approval.loloPaymentStage === "gate_in"} onChange={() => setApproval((current) => ({ ...current, loloPaymentStage: "gate_in" }))} />
+                            <strong>Collect at Gate-In</strong>
+                            <p className="mt-1 text-xs font-semibold text-slate-500">LOLO must be fully paid and approved before Gate-In approval.</p>
+                          </label>
+                          <label className={`cursor-pointer rounded-2xl border p-4 transition ${approval.loloPaymentStage === "gate_out" ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                            <input type="radio" name="loloPaymentStage" className="mr-2" checked={approval.loloPaymentStage === "gate_out"} onChange={() => setApproval((current) => ({ ...current, loloPaymentStage: "gate_out" }))} />
+                            <strong>Collect at Gate-Out</strong>
+                            <p className="mt-1 text-xs font-semibold text-slate-500">Gate-In can proceed without LOLO payment. LOLO joins storage and other charges at Gate-Out.</p>
+                          </label>
+                        </div>
+                      </Field>
+                    )}
                   </div>
                   {isPreAdviceApprovalMode ? (
                     <div className="md:col-span-2">
@@ -1712,12 +1734,18 @@ const AdminBookingModule = ({ mode }) => {
                       {usableBlocks.length > 0 && !regularYardHasSpace && (
                         <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800">
                           <p>Regular yard capacity is full. Select a designated congestion area.</p>
-                          {congestionLoading && <p className="mt-1">Checking the configured congestion surcharge...</p>}
-                          {!congestionLoading && congestionOption?.available && (
-                            <p className="mt-1">A PHP {Number(congestionOption.rate?.rateAmount || 0).toLocaleString()} surcharge will be added automatically.</p>
-                          )}
-                          {!congestionLoading && !congestionOption?.available && (
-                            <p className="mt-1 text-red-700">{congestionOption?.reason || (hasCongestionArea ? "Configure the congestion surcharge rate before approval." : "Create a designated congestion area in Yard Area Setup.")}</p>
+                          {(selectedBooking.isCMASpecialClient || approval.cmaClientId) ? (
+                            <p className="mt-1 text-violet-700">For CMA Special Clients, the normal congestion surcharge is not added to trucker billing. Configure any applicable congestion or other yard charge under CMA Rates.</p>
+                          ) : (
+                            <>
+                              {congestionLoading && <p className="mt-1">Checking the configured congestion surcharge...</p>}
+                              {!congestionLoading && congestionOption?.available && (
+                                <p className="mt-1">A PHP {Number(congestionOption.rate?.rateAmount || 0).toLocaleString()} surcharge will be added automatically.</p>
+                              )}
+                              {!congestionLoading && !congestionOption?.available && (
+                                <p className="mt-1 text-red-700">{congestionOption?.reason || (hasCongestionArea ? "Configure the congestion surcharge rate before approval." : "Create a designated congestion area in Yard Area Setup.")}</p>
+                              )}
+                            </>
                           )}
                         </div>
                       )}
@@ -1746,7 +1774,9 @@ const AdminBookingModule = ({ mode }) => {
                     </div>
                     {selectedUsesCongestionArea && (
                       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-800">
-                        This is a designated congestion area. The congestion surcharge will be added automatically when this pre-advice is approved.
+                        {(selectedBooking.isCMASpecialClient || approval.cmaClientId)
+                          ? "This is a designated congestion area. Normal trucker congestion billing is skipped for CMA Special Clients; configure any applicable charge under CMA Rates."
+                          : "This is a designated congestion area. The congestion surcharge will be added automatically when this pre-advice is approved."}
                       </div>
                     )}
                     {!selectedBlockHasCapacity && (
@@ -1795,8 +1825,10 @@ const AdminBookingModule = ({ mode }) => {
                 approveLabel="Approve Gate-In"
                 approveIcon={Truck}
                 onApprove={approveGateIn}
-                approveDisabled={saving || selectedBooking.status !== "approved_area_assigned" || (selectedBooking.loloPaymentStage !== "gate_out" && (selectedBooking.billingStatus !== "paid_approved" || Number(selectedBooking.paymentBalanceDue || 0) > 0))}
-                note={selectedBooking.loloPaymentStage === "gate_out"
+                approveDisabled={saving || selectedBooking.status !== "approved_area_assigned" || ((selectedBooking.isCMASpecialClient || selectedBooking.loloPaymentStage !== "gate_out") && (selectedBooking.billingStatus !== "paid_approved" || Number(selectedBooking.paymentBalanceDue || 0) > 0))}
+                note={selectedBooking.isCMASpecialClient
+                  ? "CMA Special Client: approve Gate-In only after the trucker Documentation Fee is paid. CMA LOLO/storage are billed separately."
+                  : selectedBooking.loloPaymentStage === "gate_out"
                   ? "LOLO collection is set to Gate-Out. No LOLO payment is required before Gate-In approval."
                   : selectedBooking.billingStatus !== "paid_approved" || Number(selectedBooking.paymentBalanceDue || 0) > 0
                     ? "Gate-In approval is locked until the Lift On / Lift Off (LOLO) charge is fully paid and approved."
@@ -1899,7 +1931,7 @@ const AdminBookingModule = ({ mode }) => {
                   </div>
                 )}
 
-                {selectedBooking.loloPaymentStage === "gate_out" ? (
+                {selectedBooking.loloPaymentStage === "gate_out" && !selectedBooking.isCMASpecialClient ? (
                   <div className="rounded-3xl border border-blue-200 bg-blue-50 p-4">
                     <p className="text-xs font-black uppercase tracking-wide text-blue-700">LOLO Payment Deferred to Gate-Out</p>
                     <p className="mt-1 text-sm font-semibold text-slate-700">Admin selected Gate-Out collection for Lift On / Lift Off. Gate-In does not require payment. LOLO, storage, congestion, and other charges will be collected at Gate-Out.</p>
@@ -1912,8 +1944,8 @@ const AdminBookingModule = ({ mode }) => {
                   <div className="rounded-3xl border border-blue-200 bg-blue-50 p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <p className="text-xs font-black uppercase tracking-wide text-blue-700">Gate-In LOLO Payment</p>
-                        <p className="mt-1 text-sm font-semibold text-slate-700">Lift On and Lift Off are collected at Gate-In. Storage, congestion, and other charges are payable only at Gate-Out.</p>
+                        <p className="text-xs font-black uppercase tracking-wide text-blue-700">{selectedBooking.isCMASpecialClient ? "Gate-In Documentation Fee" : "Gate-In LOLO Payment"}</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-700">{selectedBooking.isCMASpecialClient ? "The trucker client pays Documentation Fee only. CMA LOLO, storage, and other yard charges are kept in separate CMA Billing." : "Lift On and Lift Off are collected at Gate-In. Storage, congestion, and other charges are payable only at Gate-Out."}</p>
                       </div>
                       {Number(selectedBooking.paymentBalanceDue ?? selectedBooking.paymentAmount ?? 0) > 0 && (
                         <button
@@ -1921,14 +1953,14 @@ const AdminBookingModule = ({ mode }) => {
                           onClick={() => openCashPayment(selectedBooking)}
                           className="btn-secondary shrink-0"
                           disabled={saving || Boolean(getCashPaymentDisabledReason(selectedBooking))}
-                          title={getCashPaymentDisabledReason(selectedBooking) || "Record Gate-In LOLO cash payment"}
+                          title={getCashPaymentDisabledReason(selectedBooking) || (selectedBooking.isCMASpecialClient ? "Record Gate-In Documentation Fee cash payment" : "Record Gate-In LOLO cash payment")}
                         >
-                          <Banknote size={16} /> Record LOLO Cash
+                          <Banknote size={16} /> {selectedBooking.isCMASpecialClient ? "Record Docs Fee Cash" : "Record LOLO Cash"}
                         </button>
                       )}
                     </div>
                     <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-                      <div className="rounded-2xl bg-white p-3"><p className="text-xs font-black uppercase text-slate-400">LOLO Gross Bill</p><p className="mt-1 font-black text-slate-900">PHP {Number(selectedBooking.billingTotal || 0).toLocaleString()}</p></div>
+                      <div className="rounded-2xl bg-white p-3"><p className="text-xs font-black uppercase text-slate-400">{selectedBooking.isCMASpecialClient ? "Documentation Fee Bill" : "LOLO Gross Bill"}</p><p className="mt-1 font-black text-slate-900">PHP {Number(selectedBooking.billingTotal || 0).toLocaleString()}</p></div>
                       <div className="rounded-2xl bg-white p-3"><p className="text-xs font-black uppercase text-slate-400">Balance Due</p><p className="mt-1 font-black text-slate-900">PHP {Number(selectedBooking.paymentBalanceDue ?? selectedBooking.paymentAmount ?? 0).toLocaleString()}</p></div>
                       <div className="rounded-2xl bg-white p-3"><p className="text-xs font-black uppercase text-slate-400">Payment Status</p><p className="mt-1 font-black text-slate-900">{billingLabels[selectedBooking.billingStatus] || selectedBooking.billingStatus}</p></div>
                     </div>
@@ -2286,7 +2318,7 @@ const AdminBookingModule = ({ mode }) => {
         <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm">
           <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
-              <div><p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">{cashPaymentStage === "gate_in" ? "Gate-In LOLO Cash Payment" : "Gate-Out Cash Payment"}</p><h2 className="mt-1 text-2xl font-black text-slate-950">{cashBooking.bookingReference}</h2><p className="text-sm font-semibold text-slate-500">{cashBooking.clientName} • {cashBooking.containerNumber}</p><ContainerClassificationBadges loadStatus={cashBooking.containerLoadStatus} rateType={cashBooking.rateType} className="mt-3" /></div>
+              <div><p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">{cashPaymentStage === "gate_in" ? (cashBooking.isCMASpecialClient ? "Gate-In Documentation Fee Cash Payment" : "Gate-In LOLO Cash Payment") : (cashBooking.isCMASpecialClient ? "Gate-Out Documentation Fee Cash Payment" : "Gate-Out Cash Payment")}</p><h2 className="mt-1 text-2xl font-black text-slate-950">{cashBooking.bookingReference}</h2><p className="text-sm font-semibold text-slate-500">{cashBooking.clientName} • {cashBooking.containerNumber}</p><ContainerClassificationBadges loadStatus={cashBooking.containerLoadStatus} rateType={cashBooking.rateType} className="mt-3" /></div>
               <ModalCloseButton onClick={closeCashModal} label="Close cash payment modal" />
             </div>
 
@@ -2309,7 +2341,7 @@ const AdminBookingModule = ({ mode }) => {
               </div>
             </div>
 
-            {cashPaymentStage === "gate_out" ? (
+            {cashPaymentStage === "gate_out" && !cashBooking.isCMASpecialClient ? (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -2346,7 +2378,7 @@ const AdminBookingModule = ({ mode }) => {
 
             ) : (
               <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-800">
-                Gate-In cash payment contains Lift On / Lift Off charges only. Storage and other charges are added during Gate-Out.
+                {cashBooking.isCMASpecialClient ? "CMA Special Client: this trucker payment contains Documentation Fee only. LOLO, storage, and other yard charges are recorded in CMA Billing." : "Gate-In cash payment contains Lift On / Lift Off charges only. Storage and other charges are added during Gate-Out."}
               </div>
             )}
 
@@ -2389,7 +2421,7 @@ const AdminBookingModule = ({ mode }) => {
             </div>
             <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-xs font-bold text-blue-700">
               {cashPaymentStage === "gate_in"
-                ? "Submitting records and approves the LOLO payment, generates the receipt, and unlocks Gate-In approval."
+                ? (cashBooking.isCMASpecialClient ? "Submitting records and approves the Documentation Fee, generates the receipt, and unlocks Gate-In approval." : "Submitting records and approves the LOLO payment, generates the receipt, and unlocks Gate-In approval.")
                 : "Submitting records the cash payment, approves it, and generates the receipt. Gate-Out approval remains available only in the View modal."}
             </div>
             <div className="mt-5 flex justify-end gap-3"><button type="button" onClick={closeCashModal} className="btn-secondary" disabled={saving}>Cancel</button><button type="button" onClick={recordCashPayment} className="btn-primary" disabled={saving || cashReceivedValue < cashTotal}><Banknote size={16} /> {saving ? "Processing..." : "Record Cash Payment"}</button></div>
@@ -2415,7 +2447,8 @@ const BookingModuleViewSummary = ({ booking, section }) => {
       <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Detail label="Booking Status" value={statusLabels[booking.status] || booking.status} />
         <Detail label="Billing Status" value={billingLabels[booking.billingStatus] || booking.billingStatus} />
-        <Detail label="LOLO Collection" value={booking.loloPaymentStage === "gate_out" ? "Gate-Out" : "Gate-In"} />
+        <Detail label={booking.isCMASpecialClient ? "CMA Billing" : "LOLO Collection"} value={booking.isCMASpecialClient ? `${booking.cmaClientName || "CMA"} (yard charges separate)` : (booking.loloPaymentStage === "gate_out" ? "Gate-Out" : "Gate-In")} />
+        {booking.isCMASpecialClient && <Detail label="CMA Identification" value={String(booking.cmaIdentificationSource || "").replaceAll("_", " ")} />}
         <Detail label="Booking Number" value={booking.bookingNumber || booking.bookingReference} />
         <Detail label="Load Status" value={booking.containerLoadStatus === "laden" ? "Laden" : booking.containerLoadStatus === "empty" ? "Empty" : "Unknown"} />
         <Detail label="Rate Classification" value={booking.rateType === "international" ? "International" : "Local"} />

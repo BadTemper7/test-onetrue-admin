@@ -1512,7 +1512,7 @@ const AdminInventory = () => {
                       {container.recordSource === "legacy_migration" && <span className="mt-2 inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">Legacy Record</span>}
                       <div className="mt-1 text-xs font-bold text-emerald-700">Gate-In accepted: {formatDate(container.inventoryEnteredAt || container.gateInApprovedAt || container.storedAt)}</div>
                     </td>
-                    <td className="px-5 py-4 font-semibold text-slate-600">{container.clientName || "-"}</td>
+                    <td className="px-5 py-4 font-semibold text-slate-600"><div>{container.clientName || "-"}</div>{container.isCMASpecialClient && <div className="mt-2 inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">CMA: {container.cmaClientName || container.cmaClientCode || "Special Client"}</div>}</td>
                     <td className="px-5 py-4 font-semibold text-slate-600">
                       <div>{container.areaName || "No area"}</div>
                       <div className="mt-1 rounded-xl bg-slate-50 px-3 py-2 text-xs font-black text-slate-500">{getAreaSlotLabel(container)}</div>
@@ -1588,6 +1588,7 @@ const AdminInventory = () => {
                 </div>
                 <p className="mt-1 text-sm font-semibold text-slate-500">{selectedContainer.bookingReference} • {selectedContainer.clientName || "Client"}</p>
                 {selectedContainer.recordSource === "legacy_migration" && <span className="mt-3 inline-flex rounded-full bg-violet-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-violet-700">Legacy / Migrated Record</span>}
+                {selectedContainer.isCMASpecialClient && <span className="mt-3 ml-2 inline-flex rounded-full bg-violet-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-violet-700">CMA Special Client</span>}
               </div>
               <ModalCloseButton onClick={() => setSelectedContainer(null)} label="Close inventory details" />
             </div>
@@ -1598,6 +1599,8 @@ const AdminInventory = () => {
                 <Detail label="Container" value={`${selectedContainer.containerSize}ft • ${String(selectedContainer.containerType || "").replaceAll("_", " ")}`} />
                 <Detail label="Load Status" value={(selectedContainer.containerLoadStatus || selectedContainer.containerStatus) === "laden" ? "Laden" : (selectedContainer.containerLoadStatus || selectedContainer.containerStatus) === "empty" ? "Empty" : "Unknown"} />
                 <Detail label="Rate Classification" value={selectedContainer.rateType === "international" ? "International" : "Local"} />
+                {selectedContainer.isCMASpecialClient && <Detail label="CMA Client" value={`${selectedContainer.cmaClientName || "CMA"}${selectedContainer.cmaClientCode ? ` (${selectedContainer.cmaClientCode})` : ""}`} />}
+                {selectedContainer.isCMASpecialClient && <Detail label="CMA Identification" value={String(selectedContainer.cmaIdentificationSource || "").replaceAll("_", " ")} />}
                 <Detail label="Yard Area" value={selectedContainer.areaName} />
                 <Detail label="Slot" value={getAreaSlotLabel(selectedContainer)} />
                 <Detail label="Gate-In Accepted" value={formatDate(selectedContainer.inventoryEnteredAt || selectedContainer.gateInApprovedAt)} />

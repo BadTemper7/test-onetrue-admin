@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { Pencil, Plus, RefreshCw, Search, Trash2, Users } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
@@ -32,7 +33,7 @@ export default function AdminSpecialRates({ generalRates = [] }) {
   const requestRef = useRef(null)
   const clientRequestRef = useRef(null)
 
-  const selectableRates = useMemo(() => generalRates.filter((rate) => rate.billingScope !== "display_only"), [generalRates])
+  const selectableRates = useMemo(() => generalRates.filter((rate) => !["display_only", "cma_documentation"].includes(rate.billingScope)), [generalRates])
 
   const loadItems = async () => {
     requestRef.current?.abort()
@@ -189,8 +190,9 @@ export default function AdminSpecialRates({ generalRates = [] }) {
       </div>
       <Pagination {...pagination} />
 
-      {modalOpen && <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
-        <form onSubmit={submit} className="my-6 w-full max-w-5xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+      {modalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] grid place-items-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
+        <form onSubmit={submit} className="relative z-[10000] my-6 w-full max-w-5xl overflow-hidden rounded-3xl bg-white shadow-2xl">
           <div className="flex items-start justify-between border-b border-slate-200 p-6"><div><p className="text-xs font-black uppercase tracking-wide text-violet-700">Special Client Pricing</p><h2 className="mt-1 text-2xl font-black text-slate-950">{editing ? "Edit Special Rate" : "Create Special Rate"}</h2><p className="mt-1 text-sm text-slate-500">One setup can contain multiple clients and multiple transaction rates.</p></div><ModalCloseButton onClick={() => !saving && setModalOpen(false)} label="Close special rate form" /></div>
           <div className="grid gap-6 p-6 lg:grid-cols-2">
             <div className="space-y-5">
@@ -203,7 +205,9 @@ export default function AdminSpecialRates({ generalRates = [] }) {
           </div>
           <div className="flex justify-end gap-3 border-t border-slate-200 bg-slate-50 p-5"><button type="button" className="btn-secondary" disabled={saving} onClick={() => setModalOpen(false)}>Cancel</button><button type="submit" className="btn-primary" disabled={saving}>{saving ? "Saving..." : editing ? "Update Special Rate" : "Create Special Rate"}</button></div>
         </form>
-      </div>}
+      </div>,
+        document.body
+      )}
     </section>
   )
 }

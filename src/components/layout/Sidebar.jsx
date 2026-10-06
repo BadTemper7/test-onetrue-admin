@@ -63,6 +63,11 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
           icon: FiUserCheck,
         },
         {
+          name: "CMA Client Registration",
+          path: "/accounts/cma-clients",
+          icon: FiUserCheck,
+        },
+        {
           name: "User management",
           path: "/accounts/user-management",
           icon: FiUsers,
@@ -115,6 +120,9 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
       key: "billing",
       children: [
         { name: "Rate setup", path: "/billing/rate-setup", icon: FiSettings },
+        { name: "CMA Rates", path: "/billing/cma-rates", icon: FiSettings },
+        { name: "CMA Billing", path: "/billing/cma-billing", icon: FiDollarSign },
+        { name: "CMA Payment History", path: "/billing/cma-payment-history", icon: FiDatabase },
         { name: "Payment types", path: "/billing/payment-types", icon: FiCreditCard },
         {
           name: "Payment verification",
@@ -161,6 +169,7 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
   const pathPermissionMap = {
     "/dashboard": "dashboard",
     "/accounts/client-verification": "accounts",
+    "/accounts/cma-clients": "accounts",
     "/accounts/user-management": "accounts",
     "/operations/pre-advice": "operations",
     "/operations/gate-in": "operations",
@@ -169,6 +178,9 @@ const Sidebar = ({ isOpen, isMobileOpen, toggleMobile, onClose }) => {
     "/yard/inventory": "yard",
     "/yard/storage-monitoring": "yard",
     "/billing/rate-setup": "billing",
+    "/billing/cma-rates": "billing",
+    "/billing/cma-billing": "billing",
+    "/billing/cma-payment-history": "billing",
     "/billing/payment-types": "billing",
     "/billing/payment-verification": "billing",
     "/billing/release-container": "billing",
