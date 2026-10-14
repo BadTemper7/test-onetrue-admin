@@ -190,13 +190,10 @@ const AdminBookings = () => {
       params.set("page", String(bookingPage))
       params.set("limit", String(bookingPageSize))
 
-      const [{ data }, summaryResponse] = await Promise.all([
-        api.get(`/admin/bookings?${params.toString()}`, { signal: controller.signal }),
-        api.get("/admin/bookings/summary").catch(() => ({ data: { summary: {} } })),
-      ])
+      const { data } = await api.get(`/admin/bookings/module-data?${params.toString()}`, { signal: controller.signal })
       setBookings(data.bookings || [])
       setBookingMeta(data.pagination || { total: 0, totalPages: 1 })
-      setSummary(summaryResponse.data.summary || {})
+      setSummary(data.summary || {})
     } catch (error) {
       if (error?.code !== "ERR_CANCELED") setAlert({ type: "error", message: getApiError(error) })
     } finally {
@@ -247,13 +244,15 @@ const AdminBookings = () => {
   useEffect(() => { setBookingPage(1) }, [filters.status, filters.billingStatus, filters.loadStatus, filters.rateType, filters.recordSource, filters.clientId, filters.search])
 
   useEffect(() => {
-    loadClients()
-  }, [])
+    if ((showFilters || trackingView === "calendar") && clients.length === 0) loadClients()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showFilters, trackingView])
 
   useEffect(() => {
+    if (trackingView !== "calendar") return
     loadBookingCalendar(scheduleDate)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scheduleDate, filters.clientId])
+  }, [trackingView, scheduleDate, filters.clientId])
 
   const deleteBooking = async (booking) => {
     if (!canDeleteBooking) return
@@ -352,7 +351,7 @@ const AdminBookings = () => {
     totalItems: bookingMeta.total, totalPages: Math.max(bookingMeta.totalPages || 1, 1),
     startItem: bookingMeta.total ? ((bookingPage - 1) * bookingPageSize) + 1 : 0,
     endItem: Math.min(bookingPage * bookingPageSize, bookingMeta.total || 0),
-    pageSizeOptions: [10, 20, 50, 100], paginatedItems: bookings,
+    pageSizeOptions: [10, 25, 50, 100], paginatedItems: bookings,
   }
   const printAvailability = selectedBooking ? {
     gateIn: Boolean(selectedBooking.gateInApprovedAt && selectedBooking.gateInPassNumber),

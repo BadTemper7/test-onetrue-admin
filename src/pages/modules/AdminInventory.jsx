@@ -11,7 +11,6 @@ import WorkflowDecisionPanel from "../../components/ui/WorkflowDecisionPanel"
 import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
 import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
 import AvailableSlotPicker from "../../components/ui/AvailableSlotPicker"
-import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
 import { useAuthStore } from "../../stores/authStore"
 import { hasModulePermission } from "../../lib/permissions"
@@ -802,6 +801,9 @@ const AdminInventory = () => {
   const filterRef = useRef(null)
   const [loading, setLoading] = useState(true)
   const [tableLoading, setTableLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [paginationMeta, setPaginationMeta] = useState({ total: 0, totalPages: 1 })
   const [alert, setAlert] = useState({ type: "", message: "" })
 
   const [modalOpen, setModalOpen] = useState(false)
@@ -845,22 +847,8 @@ const AdminInventory = () => {
 
 
   useClickOutside(filterRef, () => setShowFilters(false), showFilters);
-  const filteredContainers = useMemo(() => {
-    const term = search.trim().toLowerCase()
-    return bookingContainers.filter((container) => {
-      const matchesArea = !selectedAreaId || container.area === selectedAreaId
-      const matchesStatus = selectedStatus === "all" || container.bookingStatus === selectedStatus
-      const normalizedLoadStatus = container.containerLoadStatus || container.containerStatus
-      const matchesLoadStatus = selectedLoadStatus === "all" || normalizedLoadStatus === selectedLoadStatus
-      const matchesRateType = selectedRateType === "all" || (container.rateType || "local") === selectedRateType
-      const matchesRecordSource = selectedRecordSource === "all" || (container.recordSource || "client_booking") === selectedRecordSource
-      const matchesClient = selectedClientId === "all" || String(container.client || "") === String(selectedClientId)
-      const matchesSearch = !term || [container.containerNumber, container.bookingReference, container.legacyRegistrationNumber, container.clientName, container.areaName, container.slotNumber]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(term))
-      return matchesArea && matchesStatus && matchesLoadStatus && matchesRateType && matchesRecordSource && matchesClient && matchesSearch
-    })
-  }, [bookingContainers, selectedAreaId, selectedClientId, selectedLoadStatus, selectedRateType, selectedRecordSource, selectedStatus, search])
+  const filteredContainers = bookingContainers
+
 
   const inventoryFilterKey = `${selectedAreaId}|${selectedClientId}|${selectedStatus}|${selectedLoadStatus}|${selectedRateType}|${selectedRecordSource}|${search.trim()}`
   const inventoryFilterRef = useRef(null)
@@ -875,11 +863,21 @@ const AdminInventory = () => {
   }
   const lastRequestedFilterKeyRef = useRef(inventoryFilterKey)
 
-  const containerPagination = usePagination(
-    filteredContainers,
-    10,
-    inventoryFilterKey,
-  )
+  const containerPagination = {
+    page,
+    setPage,
+    pageSize,
+    setPageSize: (value) => {
+      setPageSize(Number(value) || 10)
+      setPage(1)
+    },
+    totalItems: paginationMeta.total,
+    totalPages: paginationMeta.totalPages,
+    startItem: paginationMeta.total === 0 ? 0 : (page - 1) * pageSize + 1,
+    endItem: Math.min(page * pageSize, paginationMeta.total),
+    pageSizeOptions: [10, 25, 50, 100],
+    paginatedItems: filteredContainers,
+  }
 
   const loadAreas = async () => {
     const { data } = await api.get("/admin/inventory/areas")
@@ -919,12 +917,14 @@ const AdminInventory = () => {
     return requestPromise
   }
 
-  const loadContainers = async ({ includeStats = false } = {}) => {
+  const loadContainers = async ({ includeStats = false, includeMeta = false } = {}) => {
     const filters = inventoryFilterRef.current || {}
     const params = new URLSearchParams({
       source: "booking",
-      limit: "80",
+      page: String(page),
+      limit: String(pageSize),
       includeStats: includeStats ? "true" : "false",
+      includeMeta: includeMeta ? "true" : "false",
     })
     if (filters.selectedClientId && filters.selectedClientId !== "all") params.set("clientId", filters.selectedClientId)
     if (filters.selectedAreaId) params.set("areaId", filters.selectedAreaId)
@@ -947,10 +947,19 @@ const AdminInventory = () => {
 
     setTableLoading(true)
     let requestPromise
-    requestPromise = api.get(`/admin/inventory/containers?${requestKey}`, { signal: controller.signal })
+    requestPromise = api.get(`/admin/inventory/module-data?${requestKey}`, { signal: controller.signal })
       .then(({ data }) => {
         if (requestId !== inventoryRequestRef.current) return
         setContainers(data.containers || [])
+        setPaginationMeta({
+          total: Number(data.pagination?.total) || 0,
+          totalPages: Math.max(Number(data.pagination?.totalPages) || 1, 1),
+        })
+        if (includeMeta) {
+          setAreas(data.areas || [])
+          setSummary(data.summary || null)
+          if (data.clients) setClientOptions(data.clients || [])
+        }
         if (data.stats) {
           setInventoryStats({
             totalContainers: Number(data.stats.totalContainers) || 0,
@@ -986,8 +995,7 @@ const AdminInventory = () => {
     try {
       setLoading(true)
       setAlert({ type: "", message: "" })
-      loadInventoryStats().catch(() => {})
-      await Promise.all([loadAreas(), loadSummary(), loadClientOptions(), loadContainers({ includeStats: false })])
+      await loadContainers({ includeStats: true, includeMeta: true })
     } catch (error) {
       if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
         setAlert({ type: "error", message: getApiError(error) })
@@ -1003,10 +1011,7 @@ const AdminInventory = () => {
       realtimeRefreshTimerRef.current = null
       realtimeRefreshFlagsRef.current = { inventory: false, yard: false }
     }
-    const jobs = [loadContainers({ includeStats: false })]
-    loadInventoryStats({ refresh: true }).catch(() => {})
-    if (refreshYard) jobs.push(loadAreas(), loadSummary())
-    return Promise.all(jobs)
+    return loadContainers({ includeStats: true, includeMeta: refreshYard })
   }
 
   useEffect(() => {
@@ -1016,19 +1021,23 @@ const AdminInventory = () => {
   }, [])
 
   useEffect(() => {
-    if (lastRequestedFilterKeyRef.current === inventoryFilterKey) return undefined
+    setPage(1)
+  }, [inventoryFilterKey])
 
+  useEffect(() => {
+    if (!initialLoadStartedRef.current) return undefined
+    const requestKey = `${inventoryFilterKey}|${page}|${pageSize}`
+    if (lastRequestedFilterKeyRef.current === requestKey) return undefined
     const timer = window.setTimeout(() => {
-      lastRequestedFilterKeyRef.current = inventoryFilterKey
+      lastRequestedFilterKeyRef.current = requestKey
       loadContainers({ includeStats: false }).catch((error) => {
         if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
           setAlert({ type: "error", message: getApiError(error) })
         }
       })
-    }, 350)
-
+    }, search.trim() ? 350 : 0)
     return () => window.clearTimeout(timer)
-  }, [inventoryFilterKey])
+  }, [inventoryFilterKey, page, pageSize])
 
   useEffect(() => {
     const handleRealtime = (event) => {
@@ -1512,7 +1521,7 @@ const AdminInventory = () => {
                       {container.recordSource === "legacy_migration" && <span className="mt-2 inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">Legacy Record</span>}
                       <div className="mt-1 text-xs font-bold text-emerald-700">Gate-In accepted: {formatDate(container.inventoryEnteredAt || container.gateInApprovedAt || container.storedAt)}</div>
                     </td>
-                    <td className="px-5 py-4 font-semibold text-slate-600"><div>{container.clientName || "-"}</div>{container.isCMASpecialClient && <div className="mt-2 inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">CMA: {container.cmaClientName || container.cmaClientCode || "Special Client"}</div>}</td>
+                    <td className="px-5 py-4 font-semibold text-slate-600">{container.clientName || "-"}</td>
                     <td className="px-5 py-4 font-semibold text-slate-600">
                       <div>{container.areaName || "No area"}</div>
                       <div className="mt-1 rounded-xl bg-slate-50 px-3 py-2 text-xs font-black text-slate-500">{getAreaSlotLabel(container)}</div>
@@ -1588,7 +1597,6 @@ const AdminInventory = () => {
                 </div>
                 <p className="mt-1 text-sm font-semibold text-slate-500">{selectedContainer.bookingReference} • {selectedContainer.clientName || "Client"}</p>
                 {selectedContainer.recordSource === "legacy_migration" && <span className="mt-3 inline-flex rounded-full bg-violet-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-violet-700">Legacy / Migrated Record</span>}
-                {selectedContainer.isCMASpecialClient && <span className="mt-3 ml-2 inline-flex rounded-full bg-violet-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-violet-700">CMA Special Client</span>}
               </div>
               <ModalCloseButton onClick={() => setSelectedContainer(null)} label="Close inventory details" />
             </div>
@@ -1599,8 +1607,6 @@ const AdminInventory = () => {
                 <Detail label="Container" value={`${selectedContainer.containerSize}ft • ${String(selectedContainer.containerType || "").replaceAll("_", " ")}`} />
                 <Detail label="Load Status" value={(selectedContainer.containerLoadStatus || selectedContainer.containerStatus) === "laden" ? "Laden" : (selectedContainer.containerLoadStatus || selectedContainer.containerStatus) === "empty" ? "Empty" : "Unknown"} />
                 <Detail label="Rate Classification" value={selectedContainer.rateType === "international" ? "International" : "Local"} />
-                {selectedContainer.isCMASpecialClient && <Detail label="CMA Client" value={`${selectedContainer.cmaClientName || "CMA"}${selectedContainer.cmaClientCode ? ` (${selectedContainer.cmaClientCode})` : ""}`} />}
-                {selectedContainer.isCMASpecialClient && <Detail label="CMA Identification" value={String(selectedContainer.cmaIdentificationSource || "").replaceAll("_", " ")} />}
                 <Detail label="Yard Area" value={selectedContainer.areaName} />
                 <Detail label="Slot" value={getAreaSlotLabel(selectedContainer)} />
                 <Detail label="Gate-In Accepted" value={formatDate(selectedContainer.inventoryEnteredAt || selectedContainer.gateInApprovedAt)} />

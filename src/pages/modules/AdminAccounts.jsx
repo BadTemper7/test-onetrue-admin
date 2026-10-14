@@ -95,7 +95,7 @@ const AdminAccounts = () => {
     totalPages: Math.max(adminMeta.totalPages || 1, 1),
     startItem: adminMeta.total ? ((adminPage - 1) * adminPageSize) + 1 : 0,
     endItem: Math.min(adminPage * adminPageSize, adminMeta.total || 0),
-    pageSizeOptions: [10, 20, 50, 100],
+    pageSizeOptions: [10, 25, 50, 100],
     paginatedItems: users,
   }
   const permissionPagination = usePagination(modules, 8, form.role)

@@ -33,7 +33,7 @@ export default function AdminSpecialRates({ generalRates = [] }) {
   const requestRef = useRef(null)
   const clientRequestRef = useRef(null)
 
-  const selectableRates = useMemo(() => generalRates.filter((rate) => !["display_only", "cma_documentation"].includes(rate.billingScope)), [generalRates])
+  const selectableRates = useMemo(() => generalRates.filter((rate) => rate.billingScope !== "display_only"), [generalRates])
 
   const loadItems = async () => {
     requestRef.current?.abort()

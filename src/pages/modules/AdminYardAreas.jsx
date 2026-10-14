@@ -122,29 +122,21 @@ const AdminYardAreas = () => {
     `${searchTerm}-${selectedStatuses.join("|")}`,
   )
 
-  const loadSummary = async () => {
-    const { data } = await api.get("/admin/yard/summary")
-    setSummary(
-      data.summary || {
-        areaCount: 0,
-        totalAreaCapacityTeu: 0,
-        totalAreaCapacityFeu: 0,
-        totalBoxes: 0,
-        blockCount: 0,
-      },
-    )
-  }
-
-  const loadAreas = async () => {
-    const { data } = await api.get("/admin/yard/areas")
-    setAreas(data.areas || [])
-  }
-
   const loadAll = async () => {
     try {
       setLoading(true)
       setError("")
-      await Promise.all([loadSummary(), loadAreas()])
+      const { data } = await api.get("/admin/yard/module-data")
+      setAreas(data.areas || [])
+      setSummary(
+        data.summary || {
+          areaCount: 0,
+          totalAreaCapacityTeu: 0,
+          totalAreaCapacityFeu: 0,
+          totalBoxes: 0,
+          blockCount: 0,
+        },
+      )
     } catch (err) {
       setError(getApiError(err))
     } finally {

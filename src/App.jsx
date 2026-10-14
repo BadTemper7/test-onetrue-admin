@@ -22,10 +22,6 @@ import AdminGateOutCalendar from "./pages/modules/AdminGateOutCalendar"
 import AdminReleaseContainer from "./pages/modules/AdminReleaseContainer"
 import AdminReports from "./pages/modules/AdminReports"
 import AdminPaymentHistory from "./pages/modules/AdminPaymentHistory"
-import AdminCMAClients from "./pages/modules/AdminCMAClients"
-import AdminCMARates from "./pages/modules/AdminCMARates"
-import AdminCMABilling from "./pages/modules/AdminCMABilling"
-import AdminCMAPaymentHistory from "./pages/modules/AdminCMAPaymentHistory"
 import AdminAuditLogs from "./pages/modules/AdminAuditLogs"
 import AdminSecuritySettings from "./pages/modules/AdminSecuritySettings"
 import PlaceholderPage from "./pages/modules/PlaceholderPage"
@@ -58,7 +54,6 @@ function App() {
 
             <Route path="accounts/client-verification" element={<TitledPage title="Client Verification"><ProtectedModule moduleName="accounts"><AdminClients /></ProtectedModule></TitledPage>} />
             <Route path="accounts/client-list" element={<Navigate to="/accounts/client-verification" replace />} />
-            <Route path="accounts/cma-clients" element={<TitledPage title="CMA Client Registration"><ProtectedModule moduleName="accounts"><AdminCMAClients /></ProtectedModule></TitledPage>} />
             <Route path="accounts/user-management" element={<TitledPage title="User Management"><ProtectedModule moduleName="accounts" allowedRoles={["super_admin"]}><AdminAccounts /></ProtectedModule></TitledPage>} />
             <Route path="accounts/user-roles" element={<Navigate to="/accounts/user-management" replace />} />
 
@@ -79,9 +74,6 @@ function App() {
             <Route path="billing/release-container" element={<TitledPage title="Release Container"><ProtectedModule moduleName="billing"><AdminReleaseContainer /></ProtectedModule></TitledPage>} />
             <Route path="billing/invoices" element={<Navigate to="/billing/payment-history" replace />} />
             <Route path="billing/payment-history" element={<TitledPage title="Payment History"><ProtectedModule moduleName="billing"><AdminPaymentHistory /></ProtectedModule></TitledPage>} />
-            <Route path="billing/cma-rates" element={<TitledPage title="CMA Rates"><ProtectedModule moduleName="billing"><AdminCMARates /></ProtectedModule></TitledPage>} />
-            <Route path="billing/cma-billing" element={<TitledPage title="CMA Billing"><ProtectedModule moduleName="billing"><AdminCMABilling /></ProtectedModule></TitledPage>} />
-            <Route path="billing/cma-payment-history" element={<TitledPage title="CMA Payment History"><ProtectedModule moduleName="billing"><AdminCMAPaymentHistory /></ProtectedModule></TitledPage>} />
 
             <Route path="reports/analytics" element={<TitledPage title="Reports"><ProtectedModule moduleName="reports"><AdminReports /></ProtectedModule></TitledPage>} />
             <Route path="reports/audit-logs" element={<TitledPage title="Audit Logs"><ProtectedModule moduleName="reports"><AdminAuditLogs /></ProtectedModule></TitledPage>} />

@@ -7,7 +7,6 @@ import Pagination from "../../components/ui/Pagination"
 import TableCrudActions from "../../components/ui/TableCrudActions"
 import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
 import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
-import { usePagination } from "../../hooks/usePagination"
 import { useClickOutside } from "../../hooks/useClickOutside"
 import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
@@ -679,6 +678,7 @@ const AdminStorageMonitoring = () => {
   const [selectedStorageContainer, setSelectedStorageContainer] = useState(null)
   const [blocks, setBlocks] = useState([])
   const [containers, setContainers] = useState([])
+  const [visualContainers, setVisualContainers] = useState([])
   const [selectedAreaId, setSelectedAreaId] = useState("")
   const [selectedBlockId, setSelectedBlockId] = useState("")
   const [selectedLoadStatus, setSelectedLoadStatus] = useState("all")
@@ -687,6 +687,10 @@ const AdminStorageMonitoring = () => {
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
   const [loading, setLoading] = useState(true)
+  const [tableLoading, setTableLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [paginationMeta, setPaginationMeta] = useState({ total: 0, totalPages: 1 })
   const storageRequestRef = useRef(0)
   const storageAbortRef = useRef(null)
   const storageInFlightRef = useRef({ key: "", promise: null })
@@ -699,24 +703,14 @@ const AdminStorageMonitoring = () => {
 
   const selectedArea = useMemo(() => areas.find((area) => area.id === selectedAreaId) || null, [areas, selectedAreaId])
 
-  const storedContainers = useMemo(() => {
-    const term = search.trim().toLowerCase()
-    return containers.filter((container) => {
-      const storedByBooking = storedBookingStatuses.includes(container.bookingStatus)
-      const storedByInventory = storedInventoryStatuses.includes(container.status)
-      const normalizedLoadStatus = container.containerLoadStatus || container.containerStatus
-      const matchesLoadStatus = selectedLoadStatus === "all" || normalizedLoadStatus === selectedLoadStatus
-      const matchesRateType = selectedRateType === "all" || (container.rateType || "local") === selectedRateType
-      const matchesSearch = !term || [container.containerNumber, container.bookingReference, container.clientName, container.areaName, container.blockCode, container.blockName]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(term))
-      return (storedByBooking || storedByInventory) && matchesLoadStatus && matchesRateType && matchesSearch
-    })
-  }, [containers, search, selectedLoadStatus, selectedRateType])
-
+  // Table rows stay server-paginated. Yard visualization uses a separate
+  // lightweight collection returned in the same module-data response so the
+  // block list and 3D map still show the complete selected area.
+  const tableContainers = containers
   const selectedAreaContainers = useMemo(() => {
-    return selectedAreaId ? storedContainers.filter((container) => container.area === selectedAreaId) : storedContainers
-  }, [storedContainers, selectedAreaId])
+    if (!selectedAreaId) return []
+    return visualContainers.filter((container) => container.area === selectedAreaId)
+  }, [visualContainers, selectedAreaId])
 
   const selectedBlockContainers = useMemo(() => {
     return selectedBlockId ? selectedAreaContainers.filter((container) => container.block === selectedBlockId) : selectedAreaContainers
@@ -731,32 +725,41 @@ const AdminStorageMonitoring = () => {
     selectedRateType,
     search: search.trim(),
   }
-  const lastRequestedStorageFilterKeyRef = useRef(storageFilterKey)
+  const lastRequestedStorageFilterKeyRef = useRef(`${storageFilterKey}|${page}|${pageSize}`)
 
-  const storagePagination = usePagination(
-    selectedBlockContainers,
-    10,
-    storageFilterKey,
-  )
+  const storagePagination = {
+    page,
+    setPage,
+    pageSize,
+    setPageSize: (value) => {
+      setPageSize(Number(value) || 10)
+      setPage(1)
+    },
+    totalItems: paginationMeta.total,
+    totalPages: paginationMeta.totalPages,
+    startItem: paginationMeta.total === 0 ? 0 : (page - 1) * pageSize + 1,
+    endItem: Math.min(page * pageSize, paginationMeta.total),
+    pageSizeOptions: [10, 25, 50, 100],
+    paginatedItems: tableContainers,
+  }
 
   const usedCapacity = useMemo(() => {
     if (selectedArea) {
-      const unit = getCapacityUnit(selectedArea.containerSize)
       const value = selectedAreaContainers.reduce(
         (sum, container) => sum + getYardCapacityUsage(container.containerSize, selectedArea.containerSize),
         0,
       )
-
-      return { label: `Used ${unit}`, value }
+      return {
+        label: `Used ${getCapacityUnit(selectedArea.containerSize)}`,
+        value,
+      }
     }
 
-    const value = selectedAreaContainers.reduce(
-      (sum, container) => sum + getYardCapacityUsage(container.containerSize, 20),
-      0,
-    )
-
-    return { label: "Used TEU Equivalent", value }
-  }, [selectedArea, selectedAreaContainers])
+    return {
+      label: "Used TEU Equivalent",
+      value: areas.reduce((sum, area) => sum + (Number(area.occupiedSlots) || 0), 0),
+    }
+  }, [areas, selectedArea, selectedAreaContainers])
 
   const loadAreas = async () => {
     const { data } = await api.get("/admin/inventory/areas")
@@ -772,10 +775,13 @@ const AdminStorageMonitoring = () => {
     setBlocks(data.blocks || [])
   }
 
-  const loadContainers = async () => {
+  const loadContainers = async ({ includeMeta = false } = {}) => {
     const filters = storageFilterRef.current || {}
-    const params = new URLSearchParams({ view: "storage", limit: "180", includeStats: "false" })
-    if (filters.selectedAreaId) params.set("areaId", filters.selectedAreaId)
+    const params = new URLSearchParams({ view: "storage", page: String(page), limit: String(pageSize), includeStats: "false", includeMeta: includeMeta ? "true" : "false" })
+    if (filters.selectedAreaId) {
+      params.set("areaId", filters.selectedAreaId)
+      params.set("includeVisualization", "true")
+    }
     if (filters.selectedBlockId) params.set("blockId", filters.selectedBlockId)
     if (filters.selectedLoadStatus && filters.selectedLoadStatus !== "all") params.set("loadStatus", filters.selectedLoadStatus)
     if (filters.selectedRateType && filters.selectedRateType !== "all") params.set("rateType", filters.selectedRateType)
@@ -790,11 +796,20 @@ const AdminStorageMonitoring = () => {
     storageAbortRef.current = controller
     const requestId = ++storageRequestRef.current
 
+    setTableLoading(true)
     let requestPromise
-    requestPromise = api.get(`/admin/inventory/containers?${requestKey}`, { signal: controller.signal })
+    requestPromise = api.get(`/admin/inventory/module-data?${requestKey}`, { signal: controller.signal })
       .then(({ data }) => {
         if (requestId !== storageRequestRef.current) return
         setContainers(data.containers || [])
+        if (filters.selectedAreaId) setVisualContainers(data.visualContainers || [])
+        else setVisualContainers([])
+        setPaginationMeta({
+          total: Number(data.pagination?.total) || 0,
+          totalPages: Math.max(Number(data.pagination?.totalPages) || 1, 1),
+        })
+        if (includeMeta) setAreas(data.areas || [])
+        if (data.blocks) setBlocks(data.blocks || [])
       })
       .catch((error) => {
         if (error?.code === "ERR_CANCELED" || error?.name === "CanceledError" || controller.signal.aborted) return
@@ -803,6 +818,7 @@ const AdminStorageMonitoring = () => {
       .finally(() => {
         if (storageInFlightRef.current.promise === requestPromise) storageInFlightRef.current = { key: "", promise: null }
         if (storageAbortRef.current === controller) storageAbortRef.current = null
+        if (requestId === storageRequestRef.current) setTableLoading(false)
       })
 
     storageInFlightRef.current = { key: requestKey, promise: requestPromise }
@@ -813,9 +829,7 @@ const AdminStorageMonitoring = () => {
     try {
       setLoading(true)
       setAlert({ type: "", message: "" })
-      await Promise.all([loadAreas(), loadContainers()])
-      const areaId = storageFilterRef.current?.selectedAreaId
-      if (areaId) await loadBlocks(areaId)
+      await loadContainers({ includeMeta: true })
     } catch (error) {
       if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
         setAlert({ type: "error", message: getApiError(error) })
@@ -837,26 +851,27 @@ const AdminStorageMonitoring = () => {
       setSelectedBlockId("")
       return
     }
-
     setSelectedBlockId("")
-    loadBlocks(selectedAreaId).catch((error) => setAlert({ type: "error", message: getApiError(error) }))
   }, [selectedAreaId])
 
   useEffect(() => {
-    if (lastRequestedStorageFilterKeyRef.current === storageFilterKey) return undefined
-    const timer = window.setTimeout(() => {
-      lastRequestedStorageFilterKeyRef.current = storageFilterKey
-      setLoading(true)
-      loadContainers()
-        .catch((error) => {
-          if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
-            setAlert({ type: "error", message: getApiError(error) })
-          }
-        })
-        .finally(() => setLoading(false))
-    }, 350)
-    return () => window.clearTimeout(timer)
+    setPage(1)
   }, [storageFilterKey])
+
+  useEffect(() => {
+    if (!initialLoadStartedRef.current) return undefined
+    const requestKey = `${storageFilterKey}|${page}|${pageSize}`
+    if (lastRequestedStorageFilterKeyRef.current === requestKey) return undefined
+    const timer = window.setTimeout(() => {
+      lastRequestedStorageFilterKeyRef.current = requestKey
+      loadContainers().catch((error) => {
+        if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
+          setAlert({ type: "error", message: getApiError(error) })
+        }
+      })
+    }, search.trim() ? 350 : 0)
+    return () => window.clearTimeout(timer)
+  }, [storageFilterKey, page, pageSize])
 
   useEffect(() => {
     const handleRealtime = (event) => {
@@ -876,14 +891,7 @@ const AdminStorageMonitoring = () => {
         const flags = realtimeRefreshFlagsRef.current
         realtimeRefreshFlagsRef.current = { inventory: false, yard: false }
         realtimeRefreshTimerRef.current = null
-        const jobs = []
-        if (flags.inventory) jobs.push(loadContainers())
-        if (flags.yard) {
-          jobs.push(loadAreas())
-          const areaId = storageFilterRef.current?.selectedAreaId
-          if (areaId) jobs.push(loadBlocks(areaId))
-        }
-        Promise.all(jobs).catch((error) => {
+        loadContainers({ includeMeta: flags.yard }).catch((error) => {
           if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
             setAlert({ type: "error", message: getApiError(error) })
           }
@@ -915,7 +923,7 @@ const AdminStorageMonitoring = () => {
         </div>
         <div className="mt-5 grid gap-4 md:grid-cols-3">
           <StatCard label="Selected Area" value={selectedArea?.name || "All Areas"} icon={Warehouse} tone="slate" />
-          <StatCard label="Stored Containers" value={selectedAreaContainers.length} icon={Boxes} tone="blue" />
+          <StatCard label="Stored Containers" value={storagePagination.totalItems} icon={Boxes} tone="blue" />
           <StatCard label={usedCapacity.label} value={Math.round(usedCapacity.value * 100) / 100} icon={CalendarClock} tone="emerald" />
         </div>
         <div className="mt-4"><Alert type={alert.type}>{alert.message}</Alert></div>
@@ -969,15 +977,15 @@ const AdminStorageMonitoring = () => {
             </div>
           </div>
         </div>
-        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">Showing {selectedBlockContainers.length} stored containers</div>
+        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">Showing {storagePagination.startItem}-{storagePagination.endItem} of {storagePagination.totalItems} stored containers</div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1050px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr><th className="px-5 py-3">Container</th><th className="px-5 py-3">Customer</th><th className="px-5 py-3">Area / Block / Slot</th><th className="px-5 py-3">Size / Type</th><th className="px-5 py-3">Storage Start</th><th className="px-5 py-3">Days</th><th className="px-5 py-3">Status</th><th className="px-5 py-3 text-right">Actions</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {loading && selectedBlockContainers.length === 0 && <TableLoadingRow colSpan={8} rows={6} actionColumn label="Loading storage containers" />}
-              {selectedBlockContainers.length === 0 && !loading && <tr><td colSpan="8" className="px-5 py-12 text-center font-semibold text-slate-500">No stored containers found for the selected view.</td></tr>}
+              {tableLoading && tableContainers.length === 0 && <TableLoadingRow colSpan={8} rows={6} actionColumn label="Loading storage containers" />}
+              {tableContainers.length === 0 && !tableLoading && <tr><td colSpan="8" className="px-5 py-12 text-center font-semibold text-slate-500">No stored containers found for the selected view.</td></tr>}
               {storagePagination.paginatedItems.map((container) => {
                 const displayStatus = container.bookingStatus || container.status
                 const storageDate = container.storageStartDate || container.storedAt || container.updatedAt
@@ -1057,7 +1065,7 @@ const AdminStorageMonitoring = () => {
         </div>
       </section>
 
-      <AreaList areas={areas} selectedAreaId={selectedAreaId} onSelectArea={setSelectedAreaId} containers={storedContainers} />
+      <AreaList areas={areas} selectedAreaId={selectedAreaId} onSelectArea={setSelectedAreaId} containers={visualContainers} />
       <BlockList selectedArea={selectedArea} blocks={blocks} selectedBlockId={selectedBlockId} onSelectBlock={setSelectedBlockId} containers={selectedAreaContainers} />
       <Storage3DViewer selectedArea={selectedArea} selectedBlockId={selectedBlockId} blocks={blocks} containers={selectedBlockContainers} />
     </div>

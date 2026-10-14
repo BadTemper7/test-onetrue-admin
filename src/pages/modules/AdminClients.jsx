@@ -82,7 +82,7 @@ const AdminClients = () => {
     totalPages: Math.max(clientMeta.totalPages || 1, 1),
     startItem: clientMeta.total ? ((clientPage - 1) * clientPageSize) + 1 : 0,
     endItem: Math.min(clientPage * clientPageSize, clientMeta.total || 0),
-    pageSizeOptions: [10, 20, 50, 100],
+    pageSizeOptions: [10, 25, 50, 100],
     paginatedItems: clients,
   };
 

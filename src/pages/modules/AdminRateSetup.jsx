@@ -58,13 +58,6 @@ const chargeTypeOptions = [
     loadSpecific: true,
   },
   {
-    value: "documentation",
-    label: "CMA Documentation Fee",
-    description: "Client-billed Docs Fee applied only to CMA Special Client trucker bookings.",
-    billingDescription: "CMA Documentation Fee",
-    loadSpecific: false,
-  },
-  {
     value: "total_handling",
     label: "Total Handling Reference",
     description: "Display-only reference rate retained for existing configurations.",
@@ -153,7 +146,6 @@ const getChargeType = (rate) => {
   if (/storage/.test(text)) return "storage"
   if (/total[_\s-]*handling/.test(text)) return "total_handling"
   if (/congestion/.test(text)) return "congestion"
-  if (/documentation|document_fee|doc_fee/.test(text)) return "documentation"
   return "other"
 }
 
@@ -170,7 +162,6 @@ const getContainerSize = (rate) => {
 }
 
 const getStandardUnit = (chargeType, containerSize) => {
-  if (chargeType === "documentation") return "per transaction"
   if (chargeType === "storage") return `per ${containerSize} ft container/day`
   return `per ${containerSize} ft container`
 }
@@ -333,7 +324,7 @@ const AdminRateSetup = () => {
     const loadStatus = isLoadSpecificCharge(chargeType)
       ? (form.loadStatus === "laden" ? "laden" : form.loadStatus === "all" && editingRate ? "all" : "empty")
       : "all"
-    const containerSize = chargeType === "documentation" ? "all" : standardCharge ? form.containerSize : (getContainerSize(editingRate) === "all" ? "all" : form.containerSize)
+    const containerSize = standardCharge ? form.containerSize : (getContainerSize(editingRate) === "all" ? "all" : form.containerSize)
     const description = standardCharge ? getStandardDescription(chargeType) : form.description.trim()
     const unit = standardCharge ? getStandardUnit(chargeType, containerSize) : form.unit.trim()
     const rateAmount = Number(form.rateAmount)
@@ -369,9 +360,7 @@ const AdminRateSetup = () => {
     })
 
     if (duplicateRate) {
-      setFormError(chargeType === "documentation"
-        ? `A ${getRateTypeLabel(rateType).toLowerCase()} CMA Documentation Fee rate already exists.`
-        : `A ${getRateTypeLabel(rateType).toLowerCase()} ${getLoadStatusLabel(loadStatus).toLowerCase()} ${getChargeLabel(chargeType).toLowerCase()} rate already exists for ${containerSize}ft containers.`)
+      setFormError(`A ${getRateTypeLabel(rateType).toLowerCase()} ${getLoadStatusLabel(loadStatus).toLowerCase()} ${getChargeLabel(chargeType).toLowerCase()} rate already exists for ${containerSize}ft containers.`)
       return
     }
 
@@ -431,7 +420,7 @@ const AdminRateSetup = () => {
   const activeRateTypeLabel = getRateTypeLabel(activeRateType)
   const selectedChargeOption = getChargeOption(form.chargeType)
   const standardCharge = form.chargeType !== "other"
-  const formUnit = standardCharge ? getStandardUnit(form.chargeType, form.chargeType === "documentation" ? "all" : form.containerSize) : form.unit
+  const formUnit = standardCharge ? getStandardUnit(form.chargeType, form.containerSize) : form.unit
   const formDescription = standardCharge ? getStandardDescription(form.chargeType) : form.description
   const showLegacyLoadFallback = Boolean(editingRate && isLoadSpecificCharge(form.chargeType) && getLoadStatus(editingRate) === "all")
 
@@ -445,7 +434,7 @@ const AdminRateSetup = () => {
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">Billing Management</div>
             <h2 className="mt-1 text-2xl font-black text-slate-950">Rate Setup</h2>
             <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-500">
-              Maintain separate Local and International rates for Lift On, Lift Off, Storage, and the CMA-only Documentation Fee. Every new or changed rate requires an effectivity date; the prior rate remains valid before that date.
+              Maintain separate Local and International rates for Lift On, Lift Off, and Storage. Every new or changed rate requires an effectivity date; the prior rate remains valid before that date.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -716,7 +705,6 @@ const AdminRateSetup = () => {
                       setForm((current) => ({
                         ...current,
                         chargeType,
-                        containerSize: chargeType === "documentation" ? "all" : current.containerSize === "all" ? "20" : current.containerSize,
                         loadStatus: isLoadSpecificCharge(chargeType) ? (current.loadStatus === "laden" ? "laden" : "empty") : "all",
                       }))
                       setFormError("")
@@ -744,12 +732,7 @@ const AdminRateSetup = () => {
                   </div>
                 )}
 
-                {form.chargeType === "documentation" ? (
-                  <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
-                    <p className="text-xs font-black uppercase tracking-wide text-violet-700">Container Size</p>
-                    <p className="mt-1 text-sm font-bold text-violet-900">All sizes · CMA Special Client only</p>
-                  </div>
-                ) : form.chargeType !== "other" ? (
+                {form.chargeType !== "other" ? (
                   <label className="block">
                     <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Container Size</span>
                     <select className="input" value={form.containerSize} onChange={(event) => { setForm((current) => ({ ...current, containerSize: event.target.value })); setFormError("") }}>

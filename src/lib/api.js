@@ -44,6 +44,40 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+
+// Coalesce identical GET requests that are already in flight. This prevents
+// duplicate network calls when multiple effects/components request the same
+// table metadata at the same time. Requests with an AbortSignal are left
+// untouched because sharing them could let one consumer cancel another.
+const inFlightGetRequests = new Map();
+const axiosGet = api.get.bind(api);
+
+const stableParamsKey = (params) => {
+  if (!params) return "";
+  if (params instanceof URLSearchParams) return params.toString();
+  if (typeof params !== "object") return String(params);
+  return Object.keys(params)
+    .sort()
+    .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(params[key] ?? "")}`)
+    .join("&");
+};
+
+api.get = (url, config = {}) => {
+  if (config?.signal) return axiosGet(url, config);
+
+  const requestKey = `${url}::${stableParamsKey(config?.params)}`;
+  const existing = inFlightGetRequests.get(requestKey);
+  if (existing) return existing;
+
+  const request = axiosGet(url, config).finally(() => {
+    if (inFlightGetRequests.get(requestKey) === request) {
+      inFlightGetRequests.delete(requestKey);
+    }
+  });
+  inFlightGetRequests.set(requestKey, request);
+  return request;
+};
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
