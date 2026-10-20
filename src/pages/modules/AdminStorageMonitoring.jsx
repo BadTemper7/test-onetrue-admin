@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { Boxes, CalendarClock, Layers3, RefreshCw, Rotate3D, Search, SlidersHorizontal, Warehouse } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
-import { api, getApiError } from "../../lib/api"
+import { api } from "../../lib/api"
+import { STORAGE_PAGE_SIZE, fetchStorageOverview, fetchStoragePage, fetchYardAreaSlotMap, getStoragePageKey } from "../../lib/storageMonitoring"
 import Pagination from "../../components/ui/Pagination"
 import TableCrudActions from "../../components/ui/TableCrudActions"
 import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
@@ -12,9 +13,6 @@ import TableLoadingRow from "../../components/ui/TableLoadingRow"
 
 const MAP_WIDTH = 980
 const MAP_HEIGHT = 600
-
-const storedBookingStatuses = ["stored_in_assigned_area", "gate_out_requested", "gate_out_approved", "gate_out_reversal_requested"]
-const storedInventoryStatuses = ["in_yard", "for_billing", "pending_payment", "payment_verified", "cleared_for_gate_out", "hold"]
 
 const statusLabels = {
   in_yard: "In Yard",
@@ -53,15 +51,8 @@ const daysInYard = (value) => {
 }
 
 const getCapacityUnit = (yardContainerSize) => Number(yardContainerSize) === 20 ? "TEU" : "FEU"
-
-const getYardCapacityUsage = (containerSize, yardContainerSize = 20) => {
-  const size = Number(containerSize) || 20
-  const yardSize = Number(yardContainerSize) || 20
-  if (yardSize === 20) {
-    return size === 40 ? 2 : 1
-  }
-  return size === 20 ? 0.5 : 1
-}
+const asYardUnits = (teu, yardContainerSize) => Number(yardContainerSize) === 40 ? numberValue(teu) / 2 : numberValue(teu)
+const roundCapacity = (value) => Math.round(numberValue(value) * 100) / 100
 
 const getBlockBounds = (block) => {
   const width = Math.max(numberValue(block.width, 210), 90)
@@ -96,15 +87,6 @@ const getViewerBlockBounds = (block, selectedBlockId, area) => {
     width,
     height,
   }
-}
-
-const groupContainersByBlock = (containers) => {
-  return containers.reduce((acc, container) => {
-    if (!container.block) return acc
-    if (!acc[container.block]) acc[container.block] = []
-    acc[container.block].push(container)
-    return acc
-  }, {})
 }
 
 const getContainerBoxPosition = (container, block, area = {}, boundsOverride = null) => {
@@ -170,44 +152,49 @@ const StatCard = ({ label, value, icon: Icon, tone = "slate" }) => (
   </div>
 )
 
-const AreaList = ({ areas, selectedAreaId, onSelectArea, containers }) => {
+const AreaList = ({ areas, selectedAreaId, onSelectArea, occupancyByArea, occupancyAvailable, loading }) => {
   return (
     <div className="card p-5">
       <div className="flex items-center gap-2">
         <Warehouse size={18} className="text-emerald-700" />
         <h2 className="text-lg font-black text-slate-950">Yard Areas</h2>
       </div>
-      <p className="mt-1 text-sm font-medium text-slate-500">Click an area to show its blocks and 3D container allocation.</p>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm font-medium text-slate-500">All {areas.length} yard areas are displayed. Click any area to load its blocks and full 3D layout.</p>
+        {selectedAreaId && <button type="button" className="text-sm font-bold text-emerald-700 hover:underline" onClick={() => onSelectArea("")}>Show all areas</button>}
+      </div>
 
       <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {areas.length === 0 && <div className="rounded-2xl bg-slate-50 p-5 text-sm font-bold text-slate-500">No yard areas yet.</div>}
+        {areas.length === 0 && <div className="rounded-2xl bg-slate-50 p-5 text-sm font-bold text-slate-500">{loading ? "Loading yard areas..." : "No yard areas found."}</div>}
         {areas.map((area) => {
-          const areaContainers = containers.filter((container) => container.area === area.id)
-          const total = numberValue(area.totalTeuSlots || area.capacityTeu, 0)
-          const used = areaContainers.reduce((sum, container) => sum + getYardCapacityUsage(container.containerSize, area.containerSize), 0)
-          const usage = total ? clamp(Math.round((used / total) * 100), 0, 100) : 0
+          const areaStats = occupancyByArea[area.id] || {}
+          const total = numberValue(area.totalTeuSlots || area.capacityTeu)
+          const used = occupancyAvailable ? asYardUnits(areaStats.usedTeu, area.containerSize) : null
+          const usage = occupancyAvailable && total ? clamp(Math.round((used / total) * 100), 0, 100) : null
           const active = selectedAreaId === area.id
 
           return (
             <button
               key={area.id}
               type="button"
-              onClick={() => onSelectArea(area.id)}
+              onClick={() => onSelectArea(active ? "" : area.id)}
+              aria-pressed={active}
               className={`rounded-3xl border p-5 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg ${active ? "border-emerald-400 bg-emerald-50 ring-4 ring-emerald-100" : "border-slate-200 bg-white"}`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="text-xl font-black text-slate-950">{area.name}</div>
-                  <div className="mt-1 text-xs font-black uppercase tracking-wide text-slate-400">{area.containerSize}ft • {getSlotCounts({}, area).bayCount} Bay / {getSlotCounts({}, area).rowCount} Row / {getSlotCounts({}, area).tierCount} Tier</div>
+                  <div className="mt-1 text-xs font-black uppercase tracking-wide text-slate-400">{area.code || "Yard"} • {area.containerSize}ft • {getSlotCounts({}, area).bayCount} Bay / {getSlotCounts({}, area).rowCount} Row / {getSlotCounts({}, area).tierCount} Tier</div>
+                  <div className="mt-1 text-xs font-semibold text-slate-500">{area.blockCount || 0} blocks • {area.status || "active"}</div>
                 </div>
-                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-emerald-700 shadow-sm">{areaContainers.length} CNTR</span>
+                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-emerald-700 shadow-sm">{occupancyAvailable ? (areaStats.containerCount || 0) : "—"} CNTR</span>
               </div>
               <div className="mt-4 flex items-center justify-between text-xs font-black text-slate-500">
-                <span>{Math.round(used * 100) / 100} / {total} {getCapacityUnit(area.containerSize)}</span>
-                <span>{usage}%</span>
+                <span>{used == null ? "—" : roundCapacity(used)} / {total} {getCapacityUnit(area.containerSize)}</span>
+                <span>{usage == null ? "—" : `${usage}%`}</span>
               </div>
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-                <div className="h-full rounded-full bg-emerald-600" style={{ width: `${usage}%` }} />
+                <div className="h-full rounded-full bg-emerald-600" style={{ width: `${usage ?? 0}%` }} />
               </div>
             </button>
           )
@@ -217,8 +204,7 @@ const AreaList = ({ areas, selectedAreaId, onSelectArea, containers }) => {
   )
 }
 
-const BlockList = ({ selectedArea, blocks, selectedBlockId, onSelectBlock, containers }) => {
-  const containersByBlock = useMemo(() => groupContainersByBlock(containers), [containers])
+const BlockList = ({ selectedArea, blocks, selectedBlockId, onSelectBlock, occupancyByBlock, occupancyAvailable, unmatchedCount, loadingBlocks }) => {
 
   if (!selectedArea) {
     return (
@@ -238,7 +224,7 @@ const BlockList = ({ selectedArea, blocks, selectedBlockId, onSelectBlock, conta
             <Boxes size={18} className="text-emerald-700" />
             <h2 className="text-lg font-black text-slate-950">{selectedArea.name} Blocks</h2>
           </div>
-          <p className="mt-1 text-sm font-medium text-slate-500">Click a block to focus the 3D viewer on containers in that block.</p>
+          <p className="mt-1 text-sm font-medium text-slate-500">Every block is shown below in 3D. Click a block here to focus on its individual slots.</p>
         </div>
         <button type="button" onClick={() => onSelectBlock("")} className={`rounded-2xl px-4 py-2 text-sm font-black ${!selectedBlockId ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
           View all blocks
@@ -246,12 +232,12 @@ const BlockList = ({ selectedArea, blocks, selectedBlockId, onSelectBlock, conta
       </div>
 
       <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {blocks.length === 0 && <div className="rounded-2xl bg-slate-50 p-5 text-sm font-bold text-slate-500">No blocks configured for this area.</div>}
+        {blocks.length === 0 && <div className="rounded-2xl bg-slate-50 p-5 text-sm font-bold text-slate-500">{loadingBlocks ? "Loading blocks for this area..." : "No blocks configured for this area."}</div>}
         {blocks.map((block) => {
-          const blockContainers = containersByBlock[block.id] || []
-          const total = numberValue(block.teuSlots || block.capacityTeu, 0)
-          const used = blockContainers.reduce((sum, container) => sum + getYardCapacityUsage(container.containerSize, block.containerSize || selectedArea?.containerSize), 0)
-          const usage = total ? clamp(Math.round((used / total) * 100), 0, 100) : 0
+          const blockStats = occupancyByBlock[block.id] || {}
+          const total = numberValue(block.teuSlots ?? block.capacityTeu)
+          const used = occupancyAvailable ? asYardUnits(blockStats.usedTeu, block.containerSize || selectedArea?.containerSize) : null
+          const usage = occupancyAvailable && total ? clamp(Math.round((used / total) * 100), 0, 100) : null
           const active = selectedBlockId === block.id
 
           return (
@@ -266,7 +252,7 @@ const BlockList = ({ selectedArea, blocks, selectedBlockId, onSelectBlock, conta
                   <div className="text-lg font-black text-slate-950">{block.code}</div>
                   <div className="text-xs font-bold text-slate-500">{block.name}</div>
                 </div>
-                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-emerald-700 shadow-sm">{blockContainers.length} CNTR</span>
+                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-emerald-700 shadow-sm">{occupancyAvailable ? (blockStats.containerCount || 0) : "—"} CNTR</span>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs font-black text-slate-600">
                 <div className="rounded-xl bg-slate-50 p-2">{getSlotCounts(block, selectedArea).bayCount}<br /><span className="text-[10px] uppercase text-slate-400">Bay</span></div>
@@ -274,16 +260,21 @@ const BlockList = ({ selectedArea, blocks, selectedBlockId, onSelectBlock, conta
                 <div className="rounded-xl bg-slate-50 p-2">{getSlotCounts(block, selectedArea).tierCount}<br /><span className="text-[10px] uppercase text-slate-400">Tier</span></div>
               </div>
               <div className="mt-4 flex items-center justify-between text-xs font-black text-slate-500">
-                <span>{Math.round(used * 100) / 100} / {total} {getCapacityUnit(block.containerSize || selectedArea?.containerSize)}</span>
-                <span>{usage}%</span>
+                <span>{used == null ? "—" : roundCapacity(used)} / {total} {getCapacityUnit(block.containerSize || selectedArea?.containerSize)}</span>
+                <span>{usage == null ? "—" : `${usage}%`}</span>
               </div>
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-                <div className="h-full rounded-full bg-emerald-600" style={{ width: `${usage}%` }} />
+                <div className="h-full rounded-full bg-emerald-600" style={{ width: `${usage ?? 0}%` }} />
               </div>
             </button>
           )
         })}
       </div>
+      {unmatchedCount > 0 && (
+        <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+          {unmatchedCount} stored container{unmatchedCount === 1 ? " has" : "s have"} no matching block in this area. Review the yard location in Inventory.
+        </p>
+      )}
     </div>
   )
 }
@@ -354,7 +345,7 @@ const AxisLabel = ({ children, style, className = "" }) => (
   <span className={`yard-axis-label ${className}`} style={style}>{children}</span>
 )
 
-const BlockSlotMap = ({ selectedArea, block, containers }) => {
+const BlockSlotMap = memo(({ selectedArea, block, containers }) => {
   const { bayCount, rowCount, tierCount } = getSlotCounts(block, selectedArea)
   const [selectedContainerId, setSelectedContainerId] = useState("")
   const [rotation, setRotation] = useState(-38)
@@ -388,31 +379,40 @@ const BlockSlotMap = ({ selectedArea, block, containers }) => {
   const cubeD = 52
   const gap = 1.5
   const sceneWidth = rowCount * (cubeW + gap)
-  const sceneDepth = tierCount * (cubeD + gap)
-  const sceneHeight = bayCount * (cubeH + gap)
-  const viewportHeight = clamp(420 + bayCount * 24 + tierCount * 12, 540, 760)
+  // Physical yard coordinates: Row = horizontal, Bay = depth, Tier = height.
+  const sceneDepth = bayCount * (cubeD + gap)
+  const sceneHeight = tierCount * (cubeH + gap)
+  const viewportHeight = clamp(420 + tierCount * 24 + bayCount * 12, 540, 760)
 
-  const cubes = []
-  for (let bay = 1; bay <= bayCount; bay += 1) {
-    for (let tier = tierCount; tier >= 1; tier -= 1) {
-      for (let row = 1; row <= rowCount; row += 1) {
-        const key = `${bay}-${row}-${tier}`
-        cubes.push({
-          key,
-          row,
-          bay,
-          tier,
-          x: (row - 1) * (cubeW + gap),
-          y: -(bay - 1) * (cubeH + gap),
-          z: (tier - 1) * (cubeD + gap),
-          width: cubeW,
-          height: cubeH,
-          depth: cubeD,
-          assignedContainer: containersBySlot[key],
-        })
+  const cubes = useMemo(() => {
+    const slots = []
+    for (let bay = 1; bay <= bayCount; bay += 1) {
+      for (let tier = tierCount; tier >= 1; tier -= 1) {
+        for (let row = 1; row <= rowCount; row += 1) {
+          const key = `${bay}-${row}-${tier}`
+          slots.push({
+            key, row, bay, tier,
+            x: (row - 1) * (cubeW + gap),
+            y: -(tier - 1) * (cubeH + gap),
+            z: (bay - 1) * (cubeD + gap),
+            width: cubeW, height: cubeH, depth: cubeD,
+            assignedContainer: containersBySlot[key],
+          })
+        }
       }
     }
-  }
+    return slots
+  }, [bayCount, rowCount, tierCount, containersBySlot])
+
+  const cubeElements = useMemo(() => cubes.map((cube) => (
+    <Cube3D
+      key={cube.key}
+      cube={cube}
+      assignedContainer={cube.assignedContainer}
+      selected={cube.key === selectedSlotKey}
+      onSelect={() => setSelectedContainerId(cube.assignedContainer.id)}
+    />
+  )), [cubes, selectedSlotKey])
 
   const handlePointerDown = (event) => {
     dragRef.current = {
@@ -545,7 +545,7 @@ const BlockSlotMap = ({ selectedArea, block, containers }) => {
                 <AxisLabel
                   key={`tier-label-${tierNumber}`}
                   className="yard-axis-tier"
-                  style={{ transform: `translate3d(-38px, ${cubeH + 4}px, ${(tierNumber - 0.5) * (cubeD + gap)}px) rotateZ(${-rotation}deg) rotateX(${-tilt}deg)` }}
+                  style={{ transform: `translate3d(-38px, ${-(tierNumber - 1) * (cubeH + gap) + 8}px, -24px) rotateZ(${-rotation}deg) rotateX(${-tilt}deg)` }}
                 >
                   {tierNumber}
                 </AxisLabel>
@@ -558,25 +558,14 @@ const BlockSlotMap = ({ selectedArea, block, containers }) => {
                 <AxisLabel
                   key={`bay-label-${bayNumber}`}
                   className="yard-axis-bay"
-                  style={{ transform: `translate3d(${sceneWidth + 18}px, ${-(bayNumber - 1) * (cubeH + gap) + 8}px, -24px) rotateZ(${-rotation}deg) rotateX(${-tilt}deg)` }}
+                  style={{ transform: `translate3d(${sceneWidth + 18}px, ${cubeH + 4}px, ${(bayNumber - 0.5) * (cubeD + gap)}px) rotateZ(${-rotation}deg) rotateX(${-tilt}deg)` }}
                 >
                   {bayNumber}
                 </AxisLabel>
               )
             })}
 
-            {cubes.map((cube) => {
-              const selected = cube.key === selectedSlotKey
-              return (
-                <Cube3D
-                  key={cube.key}
-                  cube={cube}
-                  assignedContainer={cube.assignedContainer}
-                  selected={selected}
-                  onSelect={() => setSelectedContainerId(cube.assignedContainer.id)}
-                />
-              )
-            })}
+            {cubeElements}
           </div>
         </div>
       </div>
@@ -617,297 +606,339 @@ const BlockSlotMap = ({ selectedArea, block, containers }) => {
       </div>
     </div>
   )
-}
+})
 
-const Storage3DViewer = ({ selectedArea, selectedBlockId, blocks, containers }) => {
+const Storage3DViewer = memo(({ selectedArea, selectedBlockId, blocks, containers, loadingBlocks }) => {
+  const containersByBlock = useMemo(() => {
+    const grouped = new Map()
+    for (const container of containers) {
+      const group = grouped.get(container.block) || []
+      group.push(container)
+      grouped.set(container.block, group)
+    }
+    return grouped
+  }, [containers])
+  if (!selectedArea || loadingBlocks) return null
   const visibleBlocks = selectedBlockId ? blocks.filter((block) => block.id === selectedBlockId) : blocks
-  const focusedBlock = selectedBlockId ? visibleBlocks[0] : visibleBlocks.length === 1 ? visibleBlocks[0] : null
-  const blockContainers = focusedBlock ? containers.filter((container) => container.block === focusedBlock.id) : []
-  const { bayCount, rowCount, tierCount } = getSlotCounts(focusedBlock || {}, selectedArea || {})
 
   return (
-    <div className="card overflow-hidden">
+    <section className="card overflow-hidden">
       <div className="border-b border-slate-200 bg-slate-50/60 p-5">
-        <div className="grid gap-4 md:grid-cols-4">
-          <SlotSummaryCard label="Block" value={focusedBlock?.code || selectedArea?.name || "-"} sublabel={focusedBlock?.name || "Selected yard block"} icon={Boxes} />
-          <SlotSummaryCard label="Bays" value={focusedBlock ? bayCount : "-"} icon={Layers3} />
-          <SlotSummaryCard label="Rows" value={focusedBlock ? rowCount : "-"} icon={Layers3} />
-          <SlotSummaryCard label="Tiers" value={focusedBlock ? tierCount : "-"} icon={Layers3} />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-lg font-black text-slate-950"><Rotate3D size={20} className="text-emerald-700" /> {selectedArea.name} - 3D Yard View</h2>
+            <p className="mt-1 text-sm font-semibold text-slate-500">{selectedBlockId ? "Focused block" : "All blocks"} • Click a blue slot to inspect its container.</p>
+          </div>
+          <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700">{containers.length} stored containers</span>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <SlotSummaryCard label="Area" value={selectedArea.code || selectedArea.name} icon={Warehouse} />
+          <SlotSummaryCard label="Blocks" value={visibleBlocks.length} icon={Boxes} />
+          <SlotSummaryCard label="Containers" value={containers.length} icon={Layers3} />
+          <SlotSummaryCard label="Capacity" value={numberValue(selectedArea.totalTeuSlots || selectedArea.capacityTeu)} sublabel={getCapacityUnit(selectedArea.containerSize)} icon={Layers3} />
         </div>
       </div>
-
-      <div className="p-5">
-        {!selectedArea && (
-          <div className="grid min-h-[420px] place-items-center rounded-3xl border border-dashed border-slate-300 bg-slate-50 text-center">
+      <div className="space-y-5 p-5">
+        {visibleBlocks.length === 0 ? (
+          <div className="grid min-h-[200px] place-items-center rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
             <div>
-              <Warehouse className="mx-auto text-slate-300" size={46} />
-              <div className="mt-3 text-xl font-black text-slate-800">Select a yard area</div>
-              <div className="mt-1 text-sm font-semibold text-slate-500">The block slot map will appear after selecting an area.</div>
+              <Boxes className="mx-auto text-slate-300" size={42} />
+              <h3 className="mt-3 text-lg font-black text-slate-800">No blocks configured</h3>
+              <p className="mt-1 text-sm font-medium text-slate-500">Add blocks under Yard Area setup to display 3D locations.</p>
             </div>
           </div>
-        )}
-
-        {selectedArea && visibleBlocks.length === 0 && (
-          <div className="grid min-h-[420px] place-items-center rounded-3xl border border-dashed border-slate-300 bg-slate-50 text-center">
-            <div>
-              <Boxes className="mx-auto text-slate-300" size={46} />
-              <div className="mt-3 text-xl font-black text-slate-800">No blocks configured</div>
-              <div className="mt-1 text-sm font-semibold text-slate-500">Create blocks in Yard Area setup to view the slot map.</div>
-            </div>
+        ) : visibleBlocks.map((block) => (
+          <div key={`${selectedArea.id}:${block.id}`} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 740px" }}>
+            <BlockSlotMap
+              selectedArea={selectedArea}
+              block={block}
+              containers={containersByBlock.get(block.id) || []}
+            />
           </div>
-        )}
-
-        {selectedArea && visibleBlocks.length > 1 && !selectedBlockId && (
-          <div className="grid min-h-[420px] place-items-center rounded-3xl border border-dashed border-slate-300 bg-slate-50 text-center">
-            <div>
-              <Layers3 className="mx-auto text-slate-300" size={46} />
-              <div className="mt-3 text-xl font-black text-slate-800">Select a block</div>
-              <div className="mt-1 max-w-xl text-sm font-semibold text-slate-500">Choose a block from the block list above to display the exact Bay, Row, and Tier slot map.</div>
-            </div>
-          </div>
-        )}
-
-        {focusedBlock && <BlockSlotMap selectedArea={selectedArea} block={focusedBlock} containers={blockContainers} />}
+        ))}
       </div>
-    </div>
+    </section>
   )
-}
+})
 
 const AdminStorageMonitoring = () => {
   const [areas, setAreas] = useState([])
-  const [selectedStorageContainer, setSelectedStorageContainer] = useState(null)
-  const [blocks, setBlocks] = useState([])
+  const [filterBlocks, setFilterBlocks] = useState([])
   const [containers, setContainers] = useState([])
-  const [visualContainers, setVisualContainers] = useState([])
+  const [storageOccupancy, setStorageOccupancy] = useState(null)
+  const [hasOccupancy, setHasOccupancy] = useState(false)
   const [selectedAreaId, setSelectedAreaId] = useState("")
   const [selectedBlockId, setSelectedBlockId] = useState("")
+  // Storage list filters are deliberately independent of the 3D area selection.
+  const [tableAreaId, setTableAreaId] = useState("")
+  const [tableBlockId, setTableBlockId] = useState("")
+  const [blocks, setBlocks] = useState([])
+  const [blocksAreaId, setBlocksAreaId] = useState("")
+  const [visualContainers, setVisualContainers] = useState([])
+  const [visualAreaId, setVisualAreaId] = useState("")
+  const [visualError, setVisualError] = useState("")
+  const [visualTruncated, setVisualTruncated] = useState(false)
+  const [visualRefreshVersion, setVisualRefreshVersion] = useState(0)
+  const [selectedStorageContainer, setSelectedStorageContainer] = useState(null)
   const [selectedLoadStatus, setSelectedLoadStatus] = useState("all")
   const [selectedRateType, setSelectedRateType] = useState("all")
   const [search, setSearch] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
   const [showFilters, setShowFilters] = useState(false)
-  const filterRef = useRef(null)
-  const [loading, setLoading] = useState(true)
-  const [tableLoading, setTableLoading] = useState(true)
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
+  const [pageSize, setPageSize] = useState(STORAGE_PAGE_SIZE)
   const [paginationMeta, setPaginationMeta] = useState({ total: 0, totalPages: 1 })
-  const storageRequestRef = useRef(0)
-  const storageAbortRef = useRef(null)
-  const storageInFlightRef = useRef({ key: "", promise: null })
-  const initialLoadStartedRef = useRef(false)
-  const realtimeRefreshTimerRef = useRef(null)
-  const realtimeRefreshFlagsRef = useRef({ inventory: false, yard: false })
+  const [tableLoading, setTableLoading] = useState(true)
+  const [tableRefreshVersion, setTableRefreshVersion] = useState(0)
+  const [tableError, setTableError] = useState("")
+  const [loadedPageKey, setLoadedPageKey] = useState("")
+  const pageCacheRef = useRef(new Map())
+  const visualCacheRef = useRef(new Map())
+  const [loading, setLoading] = useState(true)
   const [alert, setAlert] = useState({ type: "", message: "" })
+  const filterRef = useRef(null)
+  const overviewAbortRef = useRef(null)
+  const overviewRequestIdRef = useRef(0)
+  const tableRequestIdRef = useRef(0)
+  const realtimeTimerRef = useRef(null)
+  const realtimeFlagsRef = useRef({ yard: false, inventory: false })
+  const selectedAreaRef = useRef(selectedAreaId)
+  selectedAreaRef.current = selectedAreaId
 
   useClickOutside(filterRef, () => setShowFilters(false), showFilters)
 
   const selectedArea = useMemo(() => areas.find((area) => area.id === selectedAreaId) || null, [areas, selectedAreaId])
+  const occupancyByArea = useMemo(() => Object.fromEntries(
+    (storageOccupancy?.areas || []).map((item) => [item.areaId, item]),
+  ), [storageOccupancy])
+  const occupancyByBlock = useMemo(() => Object.fromEntries(
+    (storageOccupancy?.blocks || []).map((item) => [item.blockId, item]),
+  ), [storageOccupancy])
+  const selectedAreaStats = occupancyByArea[selectedAreaId] || {}
+  const loadingBlocks = Boolean(selectedAreaId) && blocksAreaId !== selectedAreaId
+  const loadingVisualization = Boolean(selectedAreaId) && visualAreaId !== selectedAreaId
+  const unmatchedBlockCount = hasOccupancy && selectedAreaId && !loadingBlocks
+    ? Math.max(numberValue(selectedAreaStats.containerCount) - (storageOccupancy?.blocks || [])
+      .filter((item) => item.areaId === selectedAreaId && blocks.some((block) => block.id === item.blockId))
+      .reduce((total, item) => total + numberValue(item.containerCount), 0), 0)
+    : 0
 
-  // Table rows stay server-paginated. Yard visualization uses a separate
-  // lightweight collection returned in the same module-data response so the
-  // block list and 3D map still show the complete selected area.
-  const tableContainers = containers
-  const selectedAreaContainers = useMemo(() => {
-    if (!selectedAreaId) return []
-    return visualContainers.filter((container) => container.area === selectedAreaId)
-  }, [visualContainers, selectedAreaId])
-
-  const selectedBlockContainers = useMemo(() => {
-    return selectedBlockId ? selectedAreaContainers.filter((container) => container.block === selectedBlockId) : selectedAreaContainers
-  }, [selectedAreaContainers, selectedBlockId])
-
-  const storageFilterKey = `${selectedAreaId}|${selectedBlockId}|${selectedLoadStatus}|${selectedRateType}|${search.trim()}`
-  const storageFilterRef = useRef(null)
-  storageFilterRef.current = {
-    selectedAreaId,
-    selectedBlockId,
-    selectedLoadStatus,
-    selectedRateType,
-    search: search.trim(),
+  // Never display rows from the previous page/filter as though they belong to
+  // the next page while its request is in flight.
+  const pageQuery = {
+    page, pageSize, areaId: tableAreaId, blockId: tableBlockId,
+    loadStatus: selectedLoadStatus, rateType: selectedRateType, search: debouncedSearch,
   }
-  const lastRequestedStorageFilterKeyRef = useRef(`${storageFilterKey}|${page}|${pageSize}`)
+  const currentPageKey = getStoragePageKey(pageQuery)
+  const searchPending = search.trim() !== debouncedSearch
+  const tableContainers = !searchPending && loadedPageKey === currentPageKey ? containers : []
+  const pageIsPending = searchPending || tableLoading || (loadedPageKey !== currentPageKey && !tableError)
+  const selectedAreaContainers = visualAreaId === selectedAreaId ? visualContainers : []
+  const knownAreaIds = useMemo(() => new Set(areas.map((area) => area.id)), [areas])
+  const missingAreaCount = (storageOccupancy?.areas || [])
+    .filter((item) => !knownAreaIds.has(item.areaId))
+    .reduce((total, item) => total + numberValue(item.containerCount), 0)
+  const recognizedAreaTeu = (storageOccupancy?.areas || [])
+    .filter((item) => knownAreaIds.has(item.areaId))
+    .reduce((total, item) => total + numberValue(item.usedTeu), 0)
+  const usedCapacity = selectedArea
+    ? { label: `Used ${getCapacityUnit(selectedArea.containerSize)}`, value: hasOccupancy ? roundCapacity(asYardUnits(selectedAreaStats.usedTeu, selectedArea.containerSize)) : "—" }
+    : { label: "Used TEU Equivalent", value: hasOccupancy ? roundCapacity(recognizedAreaTeu) : "—" }
 
-  const storagePagination = {
+  const tableFilterBlocks = useMemo(() => filterBlocks.filter((block) => block.area === tableAreaId), [filterBlocks, tableAreaId])
+
+  const containerPagination = {
     page,
     setPage,
     pageSize,
-    setPageSize: (value) => {
-      setPageSize(Number(value) || 10)
-      setPage(1)
-    },
+    setPageSize: (value) => { setPageSize(Number(value) || STORAGE_PAGE_SIZE); setPage(1) },
     totalItems: paginationMeta.total,
     totalPages: paginationMeta.totalPages,
     startItem: paginationMeta.total === 0 ? 0 : (page - 1) * pageSize + 1,
     endItem: Math.min(page * pageSize, paginationMeta.total),
     pageSizeOptions: [10, 25, 50, 100],
-    paginatedItems: tableContainers,
   }
 
-  const usedCapacity = useMemo(() => {
-    if (selectedArea) {
-      const value = selectedAreaContainers.reduce(
-        (sum, container) => sum + getYardCapacityUsage(container.containerSize, selectedArea.containerSize),
-        0,
-      )
-      return {
-        label: `Used ${getCapacityUnit(selectedArea.containerSize)}`,
-        value,
-      }
-    }
-
-    return {
-      label: "Used TEU Equivalent",
-      value: areas.reduce((sum, area) => sum + (Number(area.occupiedSlots) || 0), 0),
-    }
-  }, [areas, selectedArea, selectedAreaContainers])
-
-  const loadAreas = async () => {
-    const { data } = await api.get("/admin/inventory/areas")
-    setAreas(data.areas || [])
+  const handleAreaChange = (areaId) => {
+    // The map changes, not the paginated storage table.
+    setSelectedAreaId(areaId)
+    setSelectedBlockId("")
+    setShowFilters(false)
   }
-
-  const loadBlocks = async (areaId = selectedAreaId) => {
-    if (!areaId) {
-      setBlocks([])
-      return
-    }
-    const { data } = await api.get(`/admin/inventory/areas/${areaId}/blocks`)
-    setBlocks(data.blocks || [])
+  const handleBlockChange = (blockId) => setSelectedBlockId(blockId)
+  const handleTableAreaChange = (areaId) => {
+    setTableAreaId(areaId)
+    setTableBlockId("")
+    setPage(1)
   }
+  const handleTableBlockChange = (blockId) => { setTableBlockId(blockId); setPage(1) }
+  const handleLoadChange = (value) => { setSelectedLoadStatus(value); setPage(1) }
+  const handleRateChange = (value) => { setSelectedRateType(value); setPage(1) }
 
-  const loadContainers = async ({ includeMeta = false } = {}) => {
-    const filters = storageFilterRef.current || {}
-    const params = new URLSearchParams({ view: "storage", page: String(page), limit: String(pageSize), includeStats: "false", includeMeta: includeMeta ? "true" : "false" })
-    if (filters.selectedAreaId) {
-      params.set("areaId", filters.selectedAreaId)
-      params.set("includeVisualization", "true")
-    }
-    if (filters.selectedBlockId) params.set("blockId", filters.selectedBlockId)
-    if (filters.selectedLoadStatus && filters.selectedLoadStatus !== "all") params.set("loadStatus", filters.selectedLoadStatus)
-    if (filters.selectedRateType && filters.selectedRateType !== "all") params.set("rateType", filters.selectedRateType)
-    if (filters.search) params.set("search", filters.search)
-
-    const requestKey = params.toString()
-    const currentInFlight = storageInFlightRef.current
-    if (currentInFlight.promise && currentInFlight.key === requestKey) return currentInFlight.promise
-
-    if (storageAbortRef.current) storageAbortRef.current.abort()
+  // A lightweight overview for ALL yards; no container list or 3D records.
+  const loadOverview = async () => {
+    overviewAbortRef.current?.abort()
     const controller = new AbortController()
-    storageAbortRef.current = controller
-    const requestId = ++storageRequestRef.current
-
-    setTableLoading(true)
-    let requestPromise
-    requestPromise = api.get(`/admin/inventory/module-data?${requestKey}`, { signal: controller.signal })
-      .then(({ data }) => {
-        if (requestId !== storageRequestRef.current) return
-        setContainers(data.containers || [])
-        if (filters.selectedAreaId) setVisualContainers(data.visualContainers || [])
-        else setVisualContainers([])
-        setPaginationMeta({
-          total: Number(data.pagination?.total) || 0,
-          totalPages: Math.max(Number(data.pagination?.totalPages) || 1, 1),
-        })
-        if (includeMeta) setAreas(data.areas || [])
-        if (data.blocks) setBlocks(data.blocks || [])
-      })
-      .catch((error) => {
-        if (error?.code === "ERR_CANCELED" || error?.name === "CanceledError" || controller.signal.aborted) return
-        throw error
-      })
-      .finally(() => {
-        if (storageInFlightRef.current.promise === requestPromise) storageInFlightRef.current = { key: "", promise: null }
-        if (storageAbortRef.current === controller) storageAbortRef.current = null
-        if (requestId === storageRequestRef.current) setTableLoading(false)
-      })
-
-    storageInFlightRef.current = { key: requestKey, promise: requestPromise }
-    return requestPromise
-  }
-
-  const loadAll = async () => {
+    overviewAbortRef.current = controller
+    const requestId = ++overviewRequestIdRef.current
+    setLoading(true)
+    setAlert({ type: "", message: "" })
     try {
-      setLoading(true)
-      setAlert({ type: "", message: "" })
-      await loadContainers({ includeMeta: true })
+      const overview = await fetchStorageOverview(api, controller.signal)
+      if (controller.signal.aborted || requestId !== overviewRequestIdRef.current) return
+      setAreas(overview.areas)
+      setFilterBlocks(overview.filterBlocks)
+      setStorageOccupancy(overview.occupancy)
+      setHasOccupancy(overview.hasOccupancy)
     } catch (error) {
-      if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
-        setAlert({ type: "error", message: getApiError(error) })
+      if (!controller.signal.aborted && requestId === overviewRequestIdRef.current) {
+        setAlert({ type: "error", message: "Unable to load yard information. Please refresh and try again." })
       }
     } finally {
-      setLoading(false)
+      if (requestId === overviewRequestIdRef.current && !controller.signal.aborted) setLoading(false)
     }
   }
 
   useEffect(() => {
-    if (initialLoadStartedRef.current) return
-    initialLoadStartedRef.current = true
-    loadAll()
+    loadOverview()
+    return () => overviewAbortRef.current?.abort()
   }, [])
 
   useEffect(() => {
-    if (!selectedAreaId) {
-      setBlocks([])
-      setSelectedBlockId("")
-      return
-    }
-    setSelectedBlockId("")
-  }, [selectedAreaId])
-
-  useEffect(() => {
-    setPage(1)
-  }, [storageFilterKey])
-
-  useEffect(() => {
-    if (!initialLoadStartedRef.current) return undefined
-    const requestKey = `${storageFilterKey}|${page}|${pageSize}`
-    if (lastRequestedStorageFilterKeyRef.current === requestKey) return undefined
-    const timer = window.setTimeout(() => {
-      lastRequestedStorageFilterKeyRef.current = requestKey
-      loadContainers().catch((error) => {
-        if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
-          setAlert({ type: "error", message: getApiError(error) })
-        }
-      })
-    }, search.trim() ? 350 : 0)
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 350)
     return () => window.clearTimeout(timer)
-  }, [storageFilterKey, page, pageSize])
+  }, [search])
+
+  // Page-cache entries are valid for a short time only, and are invalidated by
+  // realtime inventory events or manual Refresh. A fresh revisit makes no API call.
+  useEffect(() => {
+    const params = {
+      page, pageSize, areaId: tableAreaId, blockId: tableBlockId,
+      loadStatus: selectedLoadStatus, rateType: selectedRateType, search: debouncedSearch,
+    }
+    const key = getStoragePageKey(params)
+    const requestId = ++tableRequestIdRef.current
+    // Wait for the 350ms search debounce. Never request a stale query just
+    // because the text box reset the page to 1 while the user is typing.
+    if (search.trim() !== debouncedSearch) {
+      setTableLoading(true)
+      setTableError("")
+      return undefined
+    }
+    const cached = pageCacheRef.current.get(key)
+    if (cached && Date.now() - cached.fetchedAt < 10000) {
+      setTableError("")
+      setContainers(cached.result.containers)
+      setPaginationMeta(cached.result.pagination)
+      setLoadedPageKey(key)
+      setTableLoading(false)
+      return undefined
+    }
+
+    const controller = new AbortController()
+    setTableLoading(true)
+    setTableError("")
+    fetchStoragePage(api, params, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted || requestId !== tableRequestIdRef.current) return
+        const actualPage = result.pagination.page
+        const actualKey = getStoragePageKey({ ...params, page: actualPage })
+        // Cache the correctly clamped page as well, so correcting the pager
+        // does not trigger a duplicate HTTP request.
+        pageCacheRef.current.set(actualKey, { result, fetchedAt: Date.now() })
+        if (pageCacheRef.current.size > 8) pageCacheRef.current.delete(pageCacheRef.current.keys().next().value)
+        setContainers(result.containers)
+        setPaginationMeta(result.pagination)
+        setLoadedPageKey(actualKey)
+        if (actualPage !== page) setPage(actualPage)
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted && requestId === tableRequestIdRef.current) setTableError("Unable to load stored containers. Please try again.")
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && requestId === tableRequestIdRef.current) setTableLoading(false)
+      })
+    return () => controller.abort()
+  }, [page, pageSize, tableAreaId, tableBlockId, selectedLoadStatus, selectedRateType, search, debouncedSearch, tableRefreshVersion])
+
+  // The ONLY detailed yard request: blocks and full 3D positions together.
+  // Selecting a different yard aborts the previous request. Results stay cached
+  // briefly for rapid back-and-forth selection without stale data on updates.
+  useEffect(() => {
+    setBlocks([])
+    setBlocksAreaId("")
+    setVisualContainers([])
+    setVisualAreaId("")
+    setVisualError("")
+    setVisualTruncated(false)
+    if (!selectedAreaId) return undefined
+    const cached = visualCacheRef.current.get(selectedAreaId)
+    if (cached && Date.now() - cached.fetchedAt < 15000) {
+      setBlocks(cached.result.blocks)
+      setBlocksAreaId(selectedAreaId)
+      setVisualContainers(cached.result.containers)
+      setVisualTruncated(cached.result.truncated)
+      setVisualAreaId(selectedAreaId)
+      return undefined
+    }
+    const controller = new AbortController()
+    fetchYardAreaSlotMap(api, selectedAreaId, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return
+        visualCacheRef.current.set(selectedAreaId, { result, fetchedAt: Date.now() })
+        setBlocks(result.blocks)
+        setBlocksAreaId(selectedAreaId)
+        setVisualContainers(result.containers)
+        setVisualTruncated(result.truncated)
+        setVisualAreaId(selectedAreaId)
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setVisualError("Unable to display this yard right now. Please try again.")
+        setBlocksAreaId(selectedAreaId)
+        setVisualAreaId(selectedAreaId)
+      })
+    return () => controller.abort()
+  }, [selectedAreaId, visualRefreshVersion])
 
   useEffect(() => {
     const handleRealtime = (event) => {
-      const eventType = event.detail?.type || ""
-      const yardChanged = eventType.startsWith("yard:") || eventType.startsWith("inventory:block_")
-      const inventoryChanged = eventType.startsWith("booking:")
-        || eventType.startsWith("storage:")
-        || ["inventory:container_assigned", "inventory:container_created", "inventory:legacy_container_created", "inventory:updated"].includes(eventType)
-      if (!inventoryChanged && !yardChanged) return
-
-      realtimeRefreshFlagsRef.current = {
-        inventory: realtimeRefreshFlagsRef.current.inventory || inventoryChanged,
-        yard: realtimeRefreshFlagsRef.current.yard || yardChanged,
+      const type = event.detail?.type || ""
+      const yardChanged = type.startsWith("yard:") || type.startsWith("inventory:block_")
+      const inventoryChanged = type.startsWith("booking:") || type.startsWith("storage:")
+        || ["inventory:container_assigned", "inventory:container_created", "inventory:legacy_container_created", "inventory:updated"].includes(type)
+      if (!yardChanged && !inventoryChanged) return
+      realtimeFlagsRef.current = {
+        yard: realtimeFlagsRef.current.yard || yardChanged,
+        inventory: realtimeFlagsRef.current.inventory || inventoryChanged,
       }
-      if (realtimeRefreshTimerRef.current) window.clearTimeout(realtimeRefreshTimerRef.current)
-      realtimeRefreshTimerRef.current = window.setTimeout(() => {
-        const flags = realtimeRefreshFlagsRef.current
-        realtimeRefreshFlagsRef.current = { inventory: false, yard: false }
-        realtimeRefreshTimerRef.current = null
-        loadContainers({ includeMeta: flags.yard }).catch((error) => {
-          if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
-            setAlert({ type: "error", message: getApiError(error) })
-          }
-        })
+      if (realtimeTimerRef.current) window.clearTimeout(realtimeTimerRef.current)
+      realtimeTimerRef.current = window.setTimeout(() => {
+        const flags = realtimeFlagsRef.current
+        realtimeFlagsRef.current = { yard: false, inventory: false }
+        realtimeTimerRef.current = null
+        loadOverview()
+        pageCacheRef.current.clear()
+        if (flags.yard || flags.inventory) visualCacheRef.current.clear()
+        setTableRefreshVersion((value) => value + 1)
+        if (selectedAreaRef.current) setVisualRefreshVersion((value) => value + 1)
       }, 400)
     }
-
     window.addEventListener("otli:realtime", handleRealtime)
     return () => {
       window.removeEventListener("otli:realtime", handleRealtime)
-      if (realtimeRefreshTimerRef.current) window.clearTimeout(realtimeRefreshTimerRef.current)
+      if (realtimeTimerRef.current) window.clearTimeout(realtimeTimerRef.current)
     }
   }, [])
 
-  const handleRefresh = async () => {
-    await loadAll()
+  const handleRefresh = () => {
+    loadOverview()
+    pageCacheRef.current.clear()
+    visualCacheRef.current.clear()
+    setTableRefreshVersion((value) => value + 1)
+    if (selectedAreaId) {
+      setVisualRefreshVersion((value) => value + 1)
+    }
   }
 
   return (
@@ -917,28 +948,61 @@ const AdminStorageMonitoring = () => {
           <div>
             <div className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-emerald-700"><Warehouse size={15} /> Yard Module</div>
             <h2 className="mt-1 text-2xl font-black text-slate-950">Storage Monitoring</h2>
-            <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-500">Review stored containers, assigned yard locations, storage duration, and visual block allocation from one monitoring page.</p>
+            <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-500">All yard areas appear together. Storage records load one page at a time. Select a yard area to load its detailed 3D layout.</p>
           </div>
           <button type="button" onClick={handleRefresh} className="btn-secondary shrink-0" disabled={loading}><RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Refresh</button>
         </div>
         <div className="mt-5 grid gap-4 md:grid-cols-3">
           <StatCard label="Selected Area" value={selectedArea?.name || "All Areas"} icon={Warehouse} tone="slate" />
-          <StatCard label="Stored Containers" value={storagePagination.totalItems} icon={Boxes} tone="blue" />
-          <StatCard label={usedCapacity.label} value={Math.round(usedCapacity.value * 100) / 100} icon={CalendarClock} tone="emerald" />
+          <StatCard label={search.trim() || tableAreaId || tableBlockId || selectedLoadStatus !== "all" || selectedRateType !== "all" ? "Matching Containers" : "Stored Containers"} value={pageIsPending ? "…" : paginationMeta.total} icon={Boxes} tone="blue" />
+          <StatCard label={usedCapacity.label} value={usedCapacity.value} icon={CalendarClock} tone="emerald" />
         </div>
         <div className="mt-4"><Alert type={alert.type}>{alert.message}</Alert></div>
+        {hasOccupancy && storageOccupancy?.unassignedContainers > 0 && (
+          <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+            {storageOccupancy.unassignedContainers} stored container{storageOccupancy.unassignedContainers === 1 ? " is" : "s are"} not assigned to a yard area. These are excluded from area occupancy totals.
+          </p>
+        )}
+        {missingAreaCount > 0 && (
+          <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+            {missingAreaCount} stored container{missingAreaCount === 1 ? " references" : "s reference"} a yard area that no longer exists in Yard Area Setup. Review the container assignments in Inventory.
+          </p>
+        )}
       </section>
+
+      <AreaList areas={areas} selectedAreaId={selectedAreaId} onSelectArea={handleAreaChange} occupancyByArea={occupancyByArea} occupancyAvailable={hasOccupancy} loading={loading} />
+      {selectedArea && (
+        <>
+          <BlockList selectedArea={selectedArea} blocks={blocksAreaId === selectedAreaId ? blocks : []} selectedBlockId={selectedBlockId} onSelectBlock={handleBlockChange} occupancyByBlock={occupancyByBlock} occupancyAvailable={hasOccupancy} unmatchedCount={unmatchedBlockCount} loadingBlocks={loadingBlocks} />
+          {(loadingBlocks || loadingVisualization) && <div className="card p-8 text-center text-sm font-semibold text-slate-500">Loading 3D yard details for {selectedArea.name}...</div>}
+          {visualError && (
+            <div className="card flex flex-wrap items-center justify-between gap-3 p-4" role="alert">
+              <p className="text-sm font-semibold text-slate-700">{visualError}</p>
+              <button type="button" className="btn-secondary" onClick={() => {
+                visualCacheRef.current.delete(selectedAreaId)
+                setVisualRefreshVersion((value) => value + 1)
+              }}>Try Again</button>
+            </div>
+          )}
+          {visualTruncated && !visualError && (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+              Some containers are not shown in the 3D view. All stored records remain available in the list below.
+            </p>
+          )}
+          {!visualError && <Storage3DViewer selectedArea={selectedArea} selectedBlockId={selectedBlockId} blocks={blocks} containers={selectedAreaContainers} loadingBlocks={loadingBlocks || loadingVisualization} />}
+        </>
+      )}
 
       <section className="card overflow-visible">
         <div className="flex flex-col gap-4 border-b border-slate-200 p-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <h3 className="text-lg font-black text-slate-950">Stored Container List</h3>
-            <p className="text-sm font-semibold text-slate-500">Search and filter stored containers before reviewing the visual yard allocation.</p>
+            <p className="text-sm font-semibold text-slate-500">Storage containers load page by page. Table filters and 3D yard selection work independently.</p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
-              <input className="input w-full !rounded-2xl !py-3 !pl-10 !pr-4 text-sm sm:w-[340px]" placeholder="Search container, booking, customer..." value={search} onChange={(event) => setSearch(event.target.value)} />
+              <input className="input w-full !rounded-2xl !py-3 !pl-10 !pr-4 text-sm sm:w-[340px]" placeholder="Search container, booking, customer..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1) }} />
             </div>
             <div className="relative" ref={filterRef}>
               <button type="button" onClick={() => setShowFilters((current) => !current)} className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 sm:w-auto">
@@ -948,28 +1012,28 @@ const AdminStorageMonitoring = () => {
                 <div className="absolute right-0 z-40 mt-2 w-[310px] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <p className="text-sm font-black text-slate-950">Filter Storage</p>
-                    <button type="button" onClick={() => { setSelectedAreaId(""); setSelectedBlockId(""); setSelectedLoadStatus("all"); setSelectedRateType("all") }} className="text-xs font-black text-emerald-700">Reset</button>
+                    <button type="button" onClick={() => { handleTableAreaChange(""); handleLoadChange("all"); handleRateChange("all"); setSearch(""); setPage(1) }} className="text-xs font-black text-emerald-700">Reset</button>
                   </div>
                   <div className="mt-4 space-y-4">
                     <label className="block">
                       <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Yard Area</span>
-                      <select className="input !py-3" value={selectedAreaId} onChange={(event) => setSelectedAreaId(event.target.value)}>
+                      <select className="input !py-3" value={tableAreaId} onChange={(event) => handleTableAreaChange(event.target.value)}>
                         <option value="">All yard areas</option>
                         {areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
                       </select>
                     </label>
                     <label className="block">
                       <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Block</span>
-                      <select className="input !py-3" value={selectedBlockId} onChange={(event) => setSelectedBlockId(event.target.value)} disabled={!selectedAreaId}>
+                      <select className="input !py-3" value={tableBlockId} onChange={(event) => handleTableBlockChange(event.target.value)} disabled={!tableAreaId}>
                         <option value="">All blocks</option>
-                        {blocks.map((block) => <option key={block.id} value={block.id}>{block.code || block.name}</option>)}
+                        {tableFilterBlocks.map((block) => <option key={block.id} value={block.id}>{block.code || block.name}</option>)}
                       </select>
                     </label>
                     <ContainerClassificationFilters
                       loadStatus={selectedLoadStatus}
                       rateType={selectedRateType}
-                      onLoadStatusChange={setSelectedLoadStatus}
-                      onRateTypeChange={setSelectedRateType}
+                      onLoadStatusChange={handleLoadChange}
+                      onRateTypeChange={handleRateChange}
                     />
                   </div>
                 </div>
@@ -977,16 +1041,16 @@ const AdminStorageMonitoring = () => {
             </div>
           </div>
         </div>
-        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">Showing {storagePagination.startItem}-{storagePagination.endItem} of {storagePagination.totalItems} stored containers</div>
+        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">{pageIsPending ? `Loading storage page ${page}...` : tableError ? `Unable to load page ${page}` : `Showing ${tableContainers.length} on page ${page} of ${paginationMeta.total} matching containers`}</div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1050px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr><th className="px-5 py-3">Container</th><th className="px-5 py-3">Customer</th><th className="px-5 py-3">Area / Block / Slot</th><th className="px-5 py-3">Size / Type</th><th className="px-5 py-3">Storage Start</th><th className="px-5 py-3">Days</th><th className="px-5 py-3">Status</th><th className="px-5 py-3 text-right">Actions</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {tableLoading && tableContainers.length === 0 && <TableLoadingRow colSpan={8} rows={6} actionColumn label="Loading storage containers" />}
-              {tableContainers.length === 0 && !tableLoading && <tr><td colSpan="8" className="px-5 py-12 text-center font-semibold text-slate-500">No stored containers found for the selected view.</td></tr>}
-              {storagePagination.paginatedItems.map((container) => {
+              {pageIsPending && !tableError && tableContainers.length === 0 && <TableLoadingRow colSpan={8} rows={6} actionColumn label="Loading storage containers" />}
+              {tableContainers.length === 0 && !pageIsPending && !tableError && <tr><td colSpan="8" className="px-5 py-12 text-center font-semibold text-slate-500">No stored containers found for the selected view.</td></tr>}
+              {tableContainers.map((container) => {
                 const displayStatus = container.bookingStatus || container.status
                 const storageDate = container.storageStartDate || container.storedAt || container.updatedAt
                 return (
@@ -1020,7 +1084,15 @@ const AdminStorageMonitoring = () => {
             </tbody>
           </table>
         </div>
-        <Pagination {...storagePagination} />
+        {tableError && (
+          <div className="flex flex-wrap items-center gap-3 px-4 py-3" role="alert">
+            <div className="flex-1"><Alert type="error">{tableError}</Alert></div>
+            <button type="button" className="btn-secondary" onClick={() => { pageCacheRef.current.clear(); setTableRefreshVersion((value) => value + 1) }}>Retry this page</button>
+          </div>
+        )}
+        <div className={pageIsPending || tableError ? "pointer-events-none opacity-60" : ""} aria-busy={pageIsPending}>
+          <Pagination {...containerPagination} />
+        </div>
       </section>
 
 
@@ -1058,16 +1130,6 @@ const AdminStorageMonitoring = () => {
         </div>
       )}
 
-      <section className="card p-5">
-        <div className="flex items-center gap-2">
-          <Layers3 size={18} className="text-emerald-700" />
-          <div><h3 className="text-lg font-black text-slate-950">Visual Storage Overview</h3><p className="text-sm font-semibold text-slate-500">Select an area and block to inspect container placement.</p></div>
-        </div>
-      </section>
-
-      <AreaList areas={areas} selectedAreaId={selectedAreaId} onSelectArea={setSelectedAreaId} containers={visualContainers} />
-      <BlockList selectedArea={selectedArea} blocks={blocks} selectedBlockId={selectedBlockId} onSelectBlock={setSelectedBlockId} containers={selectedAreaContainers} />
-      <Storage3DViewer selectedArea={selectedArea} selectedBlockId={selectedBlockId} blocks={blocks} containers={selectedBlockContainers} />
     </div>
   )
 }
