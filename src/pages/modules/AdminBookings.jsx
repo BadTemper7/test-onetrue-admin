@@ -1,9 +1,13 @@
+import { TableToolbar, TableSearchField, TableFilterButton } from "../../components/table/TableToolbar";
+import OperationalRecordCard, { RecordCardField } from "../../components/table/OperationalRecordCard"
+import FilterDropdownPortal from "../../components/table/FilterDropdownPortal"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   BadgeDollarSign,
   Boxes,
   CalendarDays,
+  Download,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -11,25 +15,24 @@ import {
   LoaderCircle,
   Printer,
   RefreshCw,
-  Search,
-  SlidersHorizontal,
   Table2,
   Truck,
-} from "lucide-react"
+ } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModernDateInput from "../../components/ModernDateInput"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
-import Pagination from "../../components/ui/Pagination"
-import TableActionButton from "../../components/ui/TableActionButton"
-import TableCrudActions from "../../components/ui/TableCrudActions"
+import Pagination from "../../components/table/Pagination"
+import TableActionButton from "../../components/table/TableActionButton"
+import TableCrudActions from "../../components/table/TableCrudActions"
 import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
 import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
-import { useClickOutside } from "../../hooks/useClickOutside"
 import { api, getApiError } from "../../lib/api"
+import { downloadFilteredCsv } from "../../lib/filteredCsv"
 import { useAuthStore } from "../../stores/authStore"
 import { hasModulePermission } from "../../lib/permissions"
 import { printBookingDocument } from "../../lib/printDocument"
-import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import TableLoadingRow from "../../components/table/TableLoadingRow"
+import BookingDatesCell from "../../components/table/BookingDatesCell"
 
 const statusLabels = {
   pending_admin_approval: "Pending Admin Approval",
@@ -144,6 +147,7 @@ const AdminBookings = () => {
   const [filters, setFilters] = useState({ status: "all", billingStatus: "all", loadStatus: "all", rateType: "all", recordSource: "all", clientId: "all", search: "" })
   const [showFilters, setShowFilters] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
   const [deletingId, setDeletingId] = useState("")
   const [selectedBooking, setSelectedBooking] = useState(null)
   const [printDocumentType, setPrintDocumentType] = useState("gateIn")
@@ -170,7 +174,6 @@ const AdminBookings = () => {
   const canEditRateClassification = hasModulePermission(user, "operations", "edit")
   const rateClassificationLocked = selectedBooking && !["unpaid", "payment_rejected"].includes(selectedBooking.billingStatus)
 
-  useClickOutside(filterRef, () => setShowFilters(false), showFilters)
 
   const loadBookings = async () => {
     bookingRequestRef.current?.abort()
@@ -187,13 +190,19 @@ const AdminBookings = () => {
       if (filters.rateType !== "all") params.set("rateType", filters.rateType)
       if (filters.recordSource !== "all") params.set("recordSource", filters.recordSource)
       if (filters.clientId !== "all") params.set("clientId", filters.clientId)
+      params.set("includeSummary", "false")
+      const summaryParams = new URLSearchParams(params)
       params.set("page", String(bookingPage))
       params.set("limit", String(bookingPageSize))
 
-      const { data } = await api.get(`/admin/bookings/module-data?${params.toString()}`, { signal: controller.signal })
+      const [tableResponse, statsResponse] = await Promise.all([
+        api.get(`/admin/bookings/module-data?${params.toString()}`, { signal: controller.signal }),
+        api.get(`/admin/bookings/tracking-summary?${summaryParams.toString()}`, { signal: controller.signal }),
+      ])
+      const data = tableResponse.data
       setBookings(data.bookings || [])
       setBookingMeta(data.pagination || { total: 0, totalPages: 1 })
-      setSummary(data.summary || {})
+      setSummary(statsResponse.data.summary || {})
     } catch (error) {
       if (error?.code !== "ERR_CANCELED") setAlert({ type: "error", message: getApiError(error) })
     } finally {
@@ -253,6 +262,22 @@ const AdminBookings = () => {
     loadBookingCalendar(scheduleDate)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackingView, scheduleDate, filters.clientId])
+
+  const exportAllFiltered = async () => {
+    if (exporting) return
+    setExporting(true)
+    setAlert({ type: "", message: "" })
+    try {
+      await downloadFilteredCsv("/admin/bookings/export", {
+        ...filters,
+        search: filters.search.trim(),
+      }, "container-tracking-filtered")
+    } catch (error) {
+      setAlert({ type: "error", message: getApiError(error) })
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const deleteBooking = async (booking) => {
     if (!canDeleteBooking) return
@@ -339,11 +364,12 @@ const AdminBookings = () => {
     navigate(route, { state: { bookingId: booking.id, openMode: "edit" } })
   }
 
+  // Summary fields are database-wide totals; never fall back to the current page.
   const totals = useMemo(() => ({
-    all: summary.total ?? bookings.length,
-    active: bookings.filter((item) => !["rejected", "cancelled", "completed_gate_out_done"].includes(item.status)).length,
-    completed: summary.completed ?? bookings.filter((item) => item.status === "completed_gate_out_done").length,
-  }), [bookings, summary])
+    all: Number(summary.total) || 0,
+    active: Number(summary.active) || 0,
+    completed: Number(summary.completed) || 0,
+  }), [summary])
 
   const pagination = {
     page: bookingPage, setPage: setBookingPage, pageSize: bookingPageSize,
@@ -370,15 +396,15 @@ const AdminBookings = () => {
 
   return (
     <div className="space-y-6">
-      <section className="card p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <section className="card p-5 otli-module-frame">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between otli-module-hero">
           <div>
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">Operations Monitoring</div>
             <h2 className="mt-1 text-2xl font-black text-slate-950">Container Tracking</h2>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">Track bookings, container movements, yard locations, billing statuses, and remove test records when needed.</p>
           </div>
-          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
-            <div className="inline-flex w-full rounded-2xl border border-slate-200 bg-slate-100 p-1 sm:w-auto" role="group" aria-label="Container tracking view">
+          <div className="otli-tracking-controls flex w-full items-center gap-2 sm:w-auto sm:gap-3">
+            <div className="otli-tracking-switch inline-flex w-full rounded-2xl border border-slate-200 bg-slate-100 p-1 sm:w-auto" role="group" aria-label="Container tracking view">
               <button
                 type="button"
                 aria-pressed={trackingView === "table"}
@@ -399,7 +425,8 @@ const AdminBookings = () => {
             <button
               type="button"
               onClick={handleRefresh}
-              className="btn-secondary shrink-0"
+              className="btn-secondary otli-tracking-refresh shrink-0"
+              aria-label="Refresh container tracking"
               disabled={trackingView === "calendar" ? scheduleLoading : loading}
             >
               <RefreshCw size={16} className={(trackingView === "calendar" ? scheduleLoading : loading) ? "animate-spin" : ""} /> Refresh
@@ -407,25 +434,22 @@ const AdminBookings = () => {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 md:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-            <div className="flex items-center justify-between">
-              <div><div className="text-xs font-black uppercase tracking-wide text-slate-500">Total Bookings</div><div className="mt-2 text-3xl font-black text-slate-950">{totals.all}</div></div>
-              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-slate-700 shadow-sm"><Boxes size={20} /></div>
+        <div className="otli-kpi-grid mt-5 grid gap-4 md:grid-cols-3 otli-module-kpis otli-tracking-kpis">
+          {[
+            { label: "Total Bookings", value: totals.all, icon: Boxes, tone: "slate" },
+            { label: "Active Movements", value: totals.active, icon: Truck, tone: "blue" },
+            { label: "Completed", value: totals.completed, icon: CheckCircle2, tone: "emerald" },
+          ].map(({ label, value, icon: Icon, tone }) => (
+            <div key={label} className={`otli-tracking-stat otli-tracking-stat--${tone} rounded-2xl border p-4`}>
+              <div className="otli-tracking-stat-inner flex items-center gap-3">
+                <span className="otli-tracking-stat-icon grid h-10 w-10 shrink-0 place-items-center rounded-xl" aria-hidden="true"><Icon size={19} /></span>
+                <div className="otli-tracking-stat-copy min-w-0">
+                  <p className="otli-tracking-stat-label text-xs font-semibold uppercase tracking-wide">{label}</p>
+                  <p className="otli-tracking-stat-number mt-1 text-3xl font-bold tabular-nums">{Number(value || 0).toLocaleString("en-US")}</p>
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5">
-            <div className="flex items-center justify-between">
-              <div><div className="text-xs font-black uppercase tracking-wide text-blue-600">Active Movements</div><div className="mt-2 text-3xl font-black text-blue-700">{totals.active}</div></div>
-              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-blue-700 shadow-sm"><Truck size={20} /></div>
-            </div>
-          </div>
-          <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
-            <div className="flex items-center justify-between">
-              <div><div className="text-xs font-black uppercase tracking-wide text-emerald-600">Completed</div><div className="mt-2 text-3xl font-black text-emerald-700">{totals.completed}</div></div>
-              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-emerald-700 shadow-sm"><CheckCircle2 size={20} /></div>
-            </div>
-          </div>
+          ))}
         </div>
         <div className="mt-4"><Alert type={alert.type}>{alert.message}</Alert></div>
       </section>
@@ -531,7 +555,7 @@ const AdminBookings = () => {
           <Alert type={scheduleAlert.type}>{scheduleAlert.message}</Alert>
 
           <div className="mt-4 overflow-x-auto rounded-3xl border border-slate-200">
-            <table className="min-w-[1100px] w-full table-fixed border-collapse text-left text-sm">
+            <table className="otli-data-table min-w-[1100px] w-full table-fixed border-collapse text-left text-sm">
               <thead className="bg-slate-50 text-xs font-black uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="w-40 border-b border-slate-200 px-4 py-4">Time</th>
@@ -601,7 +625,7 @@ const AdminBookings = () => {
             </table>
           </div>
 
-          <div className="mt-5 grid gap-4 lg:grid-cols-4">
+          <div className="otli-kpi-grid mt-5 grid gap-4 lg:grid-cols-4">
             <ScheduleSummaryCard label="Total Bookings" value={scheduleSummary.total || 0} valueClassName="text-slate-950" />
             <ScheduleSummaryCard label="Pending Approval" value={scheduleSummary.pending || 0} valueClassName="text-amber-600" />
             <ScheduleSummaryCard label="Approved" value={scheduleSummary.approved || 0} valueClassName="text-emerald-600" />
@@ -625,29 +649,23 @@ const AdminBookings = () => {
             <p className="text-sm font-semibold text-slate-500">Search, filter, and manage the container tracking list.</p>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative" data-field-control>
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
-              <input
-                className="input w-full !rounded-2xl !py-3 !pl-10 !pr-4 text-sm sm:w-[340px]"
+          <TableToolbar className="otli-toolbar-with-export">
+            <button type="button" data-export-control onClick={exportAllFiltered} className="btn-secondary order-3 shrink-0" disabled={exporting || loading} title="Export all bookings matching these filters, across every page">
+              <Download size={16} /> {exporting ? "Exporting..." : "Export All Filtered"}
+            </button>
+            <TableSearchField
+                ariaLabel="Search bookings, containers, and clients"
                 placeholder="Search booking, container, client..."
                 value={filters.search}
                 onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
                 onKeyDown={(event) => event.key === "Enter" && loadBookings()}
               />
-            </div>
 
-            <div className="relative" ref={filterRef}>
-              <button
-                type="button"
-                onClick={() => setShowFilters((current) => !current)}
-                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 sm:w-auto"
-              >
-                <SlidersHorizontal size={18} /> Filters
-              </button>
+            <div className="relative order-2 otli-filter-control shrink-0" ref={filterRef}>
+              <TableFilterButton open={showFilters} onClick={() => setShowFilters((current) => !current)} label="Filters" />
 
               {showFilters && (
-                <div className="absolute right-0 z-40 mt-2 w-[300px] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+                <FilterDropdownPortal open={showFilters} anchorRef={filterRef} onClose={() => setShowFilters(false)} className="w-[320px] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <p className="text-sm font-black text-slate-950">Filter Tracking</p>
                     <button type="button" onClick={() => setFilters((current) => ({ ...current, status: "all", billingStatus: "all", loadStatus: "all", rateType: "all", recordSource: "all", clientId: "all" }))} className="text-xs font-black text-emerald-700">Reset</button>
@@ -690,15 +708,56 @@ const AdminBookings = () => {
                       onRateTypeChange={(rateType) => setFilters((current) => ({ ...current, rateType }))}
                     />
                   </div>
-                </div>
+                </FilterDropdownPortal>
               )}
             </div>
-          </div>
+          </TableToolbar>
         </div>
 
-        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">{loading && bookings.length === 0 ? "Loading container tracking data..." : `Showing ${bookings.length} tracked bookings`}</div>
-        <div className="overflow-x-auto">
-          <table className="min-w-[1250px] w-full text-left text-sm">
+        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">{loading && bookings.length === 0 ? "Loading container tracking data..." : `Showing ${bookings.length} of ${bookingMeta.total || 0} matching bookings`}</div>
+        <div className="space-y-3 p-3 md:hidden" aria-label="Container tracking records">
+          {!loading && bookings.length === 0 && <p className="p-6 text-center text-sm text-slate-500">No bookings found for the selected filters.</p>}
+          {bookings.map((booking) => (
+            <OperationalRecordCard
+              key={booking.id}
+              eyebrow={booking.bookingReference}
+              title={booking.containerNumber}
+              subtitle={booking.clientName || "Client"}
+              onOpen={() => viewBooking(booking)}
+              ariaLabel={`View details for ${booking.bookingReference}`}
+              actions={(<TableCrudActions
+                recordLabel={booking.bookingReference}
+                onView={() => viewBooking(booking)}
+                onEdit={() => editBooking(booking)}
+                onDelete={() => deleteBooking(booking)}
+                deleteDisabled={!canDeleteBooking}
+                deleteLabel={canDeleteBooking ? `Delete ${booking.bookingReference}` : "You do not have permission to delete bookings"}
+                deleting={deletingId === booking.id}
+              >
+                <TableActionButton label={`Open print options for ${booking.bookingReference}`} menuLabel="Print" variant="success" onClick={() => viewBooking(booking)}>
+                  <Printer size={17} aria-hidden="true" />
+                </TableActionButton>
+              </TableCrudActions>)}
+              status={
+                <>
+                  <span className={`inline-flex max-w-full rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(booking.status)}`}>{statusLabels[booking.status] || booking.status}</span>
+                  <span className={`inline-flex max-w-full rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(booking.billingStatus)}`}>{billingLabels[booking.billingStatus] || booking.billingStatus}</span>
+                  {booking.isOverstaying && <span className="rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700">Overstaying</span>}
+                </>
+              }
+            >
+              <RecordCardField label="Client email">{booking.clientEmail || "Not provided"}</RecordCardField>
+              <RecordCardField label="Size / type">{booking.containerSize}ft · {String(booking.containerType || "").replaceAll("_", " ")}</RecordCardField>
+              <RecordCardField label="Classification">{String(booking.containerLoadStatus || "Unknown").replaceAll("_", " ")} · {String(booking.rateType || "Unknown").replaceAll("_", " ")}</RecordCardField>
+              <RecordCardField label="Billing">PHP {Number(booking.billingTotal || booking.paymentAmount || 0).toLocaleString("en-US")}</RecordCardField>
+              <RecordCardField label="Yard location">{booking.assignedAreaName ? [booking.assignedAreaName, booking.assignedSlotNumber ? `Slot ${booking.assignedSlotNumber}` : "No slot"].join(" · ") : "Not assigned"}</RecordCardField>
+              <RecordCardField label="Gate dates"><BookingDatesCell inDate={booking.inDate} expectedArrivalDate={booking.expectedArrivalDate} outDate={booking.outDate} /></RecordCardField>
+              <RecordCardField label="Last updated">{formatDate(booking.updatedAt)}</RecordCardField>
+            </OperationalRecordCard>
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
+          <table data-mobile-view="scroll" className="otli-data-table min-w-[1250px] w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs font-black uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-5 py-4">Booking / Client</th>
@@ -706,8 +765,8 @@ const AdminBookings = () => {
                 <th className="px-5 py-4">Booking Status</th>
                 <th className="px-5 py-4">Billing</th>
                 <th className="px-5 py-4">Yard Location</th>
-                <th className="px-5 py-4">Date In / Out</th>
-                <th className="px-5 py-4">Updated</th>
+                <th className="px-5 py-4">Gate Dates</th>
+                <th className="px-5 py-4">Last Updated</th>
                 <th className="px-5 py-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -719,7 +778,7 @@ const AdminBookings = () => {
                     <p className="font-black text-emerald-700">{booking.bookingReference}</p>
                     {booking.recordSource === "legacy_migration" && <span className="mt-2 inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">Legacy Record</span>}
                     <p className="mt-1 font-bold text-slate-800">{booking.clientName || "Client"}</p>
-                    <p className="text-xs text-slate-500">{booking.clientEmail || "-"}</p>
+                    {booking.clientEmail && <p className="text-xs text-slate-500">{booking.clientEmail}</p>}
                   </td>
                   <td className="px-5 py-4">
                     <p className="font-black text-slate-950">{booking.containerNumber}</p>
@@ -730,7 +789,7 @@ const AdminBookings = () => {
                       className="mt-2"
                       compact
                     />
-                    <p className="mt-2 text-xs text-slate-500">{booking.shippingLine || "-"}</p>
+                    {booking.shippingLine && <p className="mt-2 text-xs text-slate-500">{booking.shippingLine}</p>}
                   </td>
                   <td className="px-5 py-4">
                     <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass(booking.status)}`}>{statusLabels[booking.status] || booking.status}</span>
@@ -738,16 +797,23 @@ const AdminBookings = () => {
                   </td>
                   <td className="px-5 py-4">
                     <p className="font-black text-slate-900">PHP {Number(booking.billingTotal || booking.paymentAmount || 0).toLocaleString()}</p>
-                    <span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass(booking.billingStatus)}`}>{billingLabels[booking.billingStatus] || booking.billingStatus}</span>
+                    {booking.billingStatus === "unpaid" ? (
+                      <p className="mt-1 text-xs font-medium text-slate-500">Unpaid</p>
+                    ) : (
+                      <span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass(booking.billingStatus)}`}>{billingLabels[booking.billingStatus] || booking.billingStatus}</span>
+                    )}
                   </td>
                   <td className="px-5 py-4">
-                    <p className="font-bold text-slate-800">{booking.assignedAreaName || "Not assigned"}</p>
-                    <p className="mt-1 text-xs text-slate-500">{booking.assignedBlockName || booking.assignedBlockCode || "-"}</p>
-                    <p className="text-xs text-slate-500">Slot: {booking.assignedSlotNumber || "-"}</p>
+                    {booking.assignedAreaName ? (
+                      <>
+                        <p className="font-bold text-slate-800">{booking.assignedAreaName}</p>
+                        {(booking.assignedBlockName || booking.assignedBlockCode) && <p className="mt-1 text-xs text-slate-500">{booking.assignedBlockName || booking.assignedBlockCode}</p>}
+                        {booking.assignedSlotNumber && <p className="text-xs text-slate-500">Slot {booking.assignedSlotNumber}</p>}
+                      </>
+                    ) : <span className="text-xs font-semibold text-slate-600">Not assigned</span>}
                   </td>
                   <td className="px-5 py-4">
-                    <div className="flex items-center gap-2 text-slate-700"><CalendarDays size={14} className="text-emerald-600" /> {formatDate(booking.inDate || booking.expectedArrivalDate)}</div>
-                    <div className="mt-2 flex items-center gap-2 text-slate-500"><CalendarDays size={14} /> {formatDate(booking.outDate)}</div>
+                    <BookingDatesCell inDate={booking.inDate} expectedArrivalDate={booking.expectedArrivalDate} outDate={booking.outDate} />
                   </td>
                   <td className="px-5 py-4 text-slate-600">{formatDate(booking.updatedAt)}</td>
                   <td className="px-5 py-4 text-right">
@@ -762,6 +828,7 @@ const AdminBookings = () => {
                     >
                       <TableActionButton
                         label={`Open print options for ${booking.bookingReference}`}
+                        menuLabel="Print"
                         variant="success"
                         onClick={() => viewBooking(booking)}
                       >

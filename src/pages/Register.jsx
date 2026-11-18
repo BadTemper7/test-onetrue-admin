@@ -34,6 +34,7 @@ const Register = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
+  const [otpStatusUncertain, setOtpStatusUncertain] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -301,14 +302,26 @@ const Register = () => {
       const { data } = await api.post(
         "/auth/client/register/request-otp",
         buildRegistrationFormData(),
-        { headers: { "Content-Type": "multipart/form-data" } },
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+          timeout: 120000, // document upload + single registration OTP email
+        },
       );
+      setOtpStatusUncertain(false);
       setOtpSent(true);
       setCurrentStep(5);
       return data;
     } catch (error) {
-      setErrors({ general: getApiError(error) });
-      throw error;
+      // No automatic retry: the server may already have accepted the OTP
+      // request even if the browser never received its response.
+      const uncertain = !error?.response && ["ECONNABORTED", "ETIMEDOUT", "ERR_NETWORK"].includes(error?.code);
+      setOtpStatusUncertain(uncertain);
+      setErrors({
+        general: uncertain
+          ? "We could not confirm the registration request. If an OTP arrives in your email, choose 'I received an OTP' below. Please do not repeatedly submit the documents."
+          : getApiError(error),
+      });
+      return null;
     } finally {
       setLoading(false);
     }
@@ -926,6 +939,21 @@ const Register = () => {
             <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {errors.general}
             </div>
+          )}
+          {currentStep === 4 && otpStatusUncertain && (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => {
+                setOtpSent(true);
+                setOtpStatusUncertain(false);
+                setErrors({});
+                setCurrentStep(5);
+              }}
+              className="mt-3 text-sm font-medium text-emerald-700 underline disabled:opacity-50"
+            >
+              I received an OTP - enter the code
+            </button>
           )}
 
           {/* Form Content */}

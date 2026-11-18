@@ -1,16 +1,17 @@
+import FilterDropdownPortal from "../../components/table/FilterDropdownPortal";
+import { TableToolbar, TableSearchField, TableFilterButton } from "../../components/table/TableToolbar";
 import { useEffect, useRef, useState } from "react"
-import { CreditCard, Printer, RefreshCw, Search, SlidersHorizontal } from "lucide-react"
+import { CreditCard, Printer, RefreshCw  } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
-import Pagination from "../../components/ui/Pagination"
-import TableActionButton from "../../components/ui/TableActionButton"
-import TableCrudActions from "../../components/ui/TableCrudActions"
+import Pagination from "../../components/table/Pagination"
+import TableActionButton from "../../components/table/TableActionButton"
+import TableCrudActions from "../../components/table/TableCrudActions"
 import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
 import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
-import { useClickOutside } from "../../hooks/useClickOutside"
 import { api, getApiError } from "../../lib/api"
 import { printBookingDocument } from "../../lib/printDocument"
-import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import TableLoadingRow from "../../components/table/TableLoadingRow"
 
 const money = (value) => `PHP ${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const formatDate = (value) => value ? new Date(value).toLocaleString("en-PH") : "-"
@@ -49,11 +50,11 @@ const AdminPaymentHistory = ({ mode = "history" }) => {
   const [pageSize, setPageSize] = useState(10)
   const [paginationMeta, setPaginationMeta] = useState({ total: 0, totalPages: 1 })
   const [search, setSearch] = useState("")
+  const [showFilters, setShowFilters] = useState(false)
+  const filterRef = useRef(null)
   const [paymentType, setPaymentType] = useState("all")
   const [loadStatus, setLoadStatus] = useState("all")
   const [rateType, setRateType] = useState("all")
-  const [showFilters, setShowFilters] = useState(false)
-  const filterRef = useRef(null)
   const [selectedTransaction, setSelectedTransaction] = useState(null)
   const [error, setError] = useState("")
 
@@ -76,7 +77,6 @@ const AdminPaymentHistory = ({ mode = "history" }) => {
     }
   }
 
-  useClickOutside(filterRef, () => setShowFilters(false), showFilters)
 
   const filterKey = `${search.trim()}|${paymentType}|${loadStatus}|${rateType}`
   useEffect(() => { setPage(1) }, [filterKey])
@@ -111,7 +111,7 @@ const AdminPaymentHistory = ({ mode = "history" }) => {
 
   return (
     <div className="space-y-5">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="otli-module-hero otli-module-standalone rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Billing Records</p>
@@ -127,42 +127,27 @@ const AdminPaymentHistory = ({ mode = "history" }) => {
       {error && <Alert type="error" message={error} />}
 
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 md:flex-row">
-          <label className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
-            <input className="input pl-10" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search booking, container, client, payment, or receipt" />
-          </label>
-          <select className="input md:max-w-[220px]" value={paymentType} onChange={(event) => setPaymentType(event.target.value)}>
-            <option value="all">All payment types</option>
-            <option value="cash">Cash</option>
-            <option value="bank">Bank</option>
-            <option value="ewallet">E-wallet</option>
-          </select>
-          <div className="relative" ref={filterRef}>
-            <button type="button" onClick={() => setShowFilters((current) => !current)} className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 md:w-auto">
-              <SlidersHorizontal size={18} /> Container Filters
-            </button>
-            {showFilters && (
-              <div className="absolute right-0 z-40 mt-2 w-[310px] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <p className="text-sm font-black text-slate-950">Filter Containers</p>
-                  <button type="button" onClick={() => { setLoadStatus("all"); setRateType("all") }} className="text-xs font-black text-emerald-700">Reset</button>
-                </div>
-                <div className="mt-4 space-y-4">
-                  <ContainerClassificationFilters
-                    loadStatus={loadStatus}
-                    rateType={rateType}
-                    onLoadStatusChange={setLoadStatus}
-                    onRateTypeChange={setRateType}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
+        <div className="border-b border-slate-200 p-4">
+          <TableToolbar>
+            <TableSearchField value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search payment, container, client..." ariaLabel="Search payment history" />
+            <div className="relative shrink-0" ref={filterRef}>
+              <TableFilterButton open={showFilters} onClick={() => setShowFilters((current) => !current)} count={Number(paymentType !== "all") + Number(loadStatus !== "all") + Number(rateType !== "all")} />
+              <FilterDropdownPortal open={showFilters} anchorRef={filterRef} onClose={() => setShowFilters(false)} className="w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+                <h4 className="mb-3 text-sm font-semibold text-slate-900">Filter payments</h4>
+                <label className="block text-xs font-semibold text-slate-600">Payment type
+                  <select className="input mt-1 w-full" value={paymentType} onChange={(event) => setPaymentType(event.target.value)}>
+                    <option value="all">All payment types</option><option value="cash">Cash</option><option value="bank">Bank</option><option value="ewallet">E-wallet</option>
+                  </select>
+                </label>
+                <div className="mt-3"><ContainerClassificationFilters loadStatus={loadStatus} rateType={rateType} onLoadStatusChange={setLoadStatus} onRateTypeChange={setRateType} selectClassName="otli-inline-filter-select w-full" /></div>
+                <button type="button" className="mt-3 text-xs font-semibold text-emerald-700" onClick={() => { setPaymentType("all"); setLoadStatus("all"); setRateType("all"); }}>Reset filters</button>
+              </FilterDropdownPortal>
+            </div>
+          </TableToolbar>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px] text-left text-sm">
+          <table className="otli-data-table w-full min-w-[1100px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Transaction</th>
@@ -198,6 +183,7 @@ const AdminPaymentHistory = ({ mode = "history" }) => {
                       {item.isVatApplicable && (
                         <TableActionButton
                           label={`Print VAT invoice for ${item.bookingReference}`}
+                          menuLabel="Print VAT invoice"
                           variant="info"
                           onClick={() => printBookingDocument(buildInvoicePrintPayload(item), "invoice")}
                         >
@@ -206,6 +192,7 @@ const AdminPaymentHistory = ({ mode = "history" }) => {
                       )}
                       <TableActionButton
                         label={`Print ${item.isVatApplicable ? "receipt" : "acknowledgement receipt"} for ${item.bookingReference}`}
+                        menuLabel={item.isVatApplicable ? "Print receipt" : "Print acknowledgement"}
                         variant="success"
                         onClick={() => printBookingDocument(buildReceiptPrintPayload(item), "receipt")}
                       >

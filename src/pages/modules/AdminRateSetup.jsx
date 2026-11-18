@@ -1,3 +1,5 @@
+import { TableToolbar, TableSearchField, TableFilterButton } from "../../components/table/TableToolbar";
+import FilterDropdownPortal from "../../components/table/FilterDropdownPortal"
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
   CheckCircle2,
@@ -5,17 +7,14 @@ import {
   MapPinned,
   Plus,
   RefreshCw,
-  Search,
-  SlidersHorizontal,
-} from "lucide-react"
+ } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
-import Pagination from "../../components/ui/Pagination"
-import TableCrudActions from "../../components/ui/TableCrudActions"
-import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import Pagination from "../../components/table/Pagination"
+import TableCrudActions from "../../components/table/TableCrudActions"
+import TableLoadingRow from "../../components/table/TableLoadingRow"
 import AdminSpecialRates from "./AdminSpecialRates"
 import { usePagination } from "../../hooks/usePagination"
-import { useClickOutside } from "../../hooks/useClickOutside"
 import { api, getApiError } from "../../lib/api"
 
 const rateTypeOptions = [
@@ -211,7 +210,6 @@ const AdminRateSetup = () => {
     loadRates()
   }, [])
 
-  useClickOutside(filterRef, () => setShowFilters(false), showFilters)
 
   const ratesByType = useMemo(() => rates.reduce((counts, rate) => {
     counts[getRateType(rate)] += 1
@@ -428,8 +426,8 @@ const AdminRateSetup = () => {
     <div className="space-y-6">
       <Alert type={alert.type}>{alert.message}</Alert>
 
-      <section className="card p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <section className="card p-5 otli-module-frame">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between otli-module-hero otli-module-hero--plain">
           <div>
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">Billing Management</div>
             <h2 className="mt-1 text-2xl font-black text-slate-950">Rate Setup</h2>
@@ -550,22 +548,17 @@ const AdminRateSetup = () => {
           </div>
         )}
 
-        <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative flex-1 lg:max-w-xl">
-            <Search size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              className="input !pl-11"
+        <TableToolbar>
+          <TableSearchField
               value={filters.search}
               onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
               placeholder={`Search ${activeRateTypeLabel.toLowerCase()} rates`}
-            />
-          </div>
+                ariaLabel="Search records"
+              />
           <div className="relative" ref={filterRef}>
-            <button type="button" onClick={() => setShowFilters((current) => !current)} className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 sm:w-auto">
-              <SlidersHorizontal size={18} /> Filters
-            </button>
+            <TableFilterButton open={showFilters} onClick={() => setShowFilters((current) => !current)} label="Filters" />
             {showFilters && (
-              <div className="absolute right-0 z-40 mt-2 w-[310px] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+              <FilterDropdownPortal open={showFilters} anchorRef={filterRef} onClose={() => setShowFilters(false)} className="w-[310px] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <p className="text-sm font-black text-slate-950">Filter Rates</p>
                   <button type="button" onClick={() => setFilters((current) => ({ ...current, chargeType: "all", containerSize: "all", loadStatus: "all" }))} className="text-xs font-black text-emerald-700">Reset</button>
@@ -594,17 +587,17 @@ const AdminRateSetup = () => {
                     <option value="laden">Loaded</option>
                   </select>
                 </label>
-              </div>
+              </FilterDropdownPortal>
             )}
           </div>
-        </div>
+        </TableToolbar>
 
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">
           Showing {filteredRates.length} of {selectedTypeRates.length} {activeRateTypeLabel.toLowerCase()} rates
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-[1140px] w-full text-left text-sm">
+          <table className="otli-data-table min-w-[1140px] w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs font-black uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-5 py-4">Charge</th>

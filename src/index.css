@@ -809,3 +809,469 @@ label + .field-validation-error,
 @media (prefers-reduced-motion: reduce) {
   .otli-table-skeleton { animation: none; }
 }
+
+
+/* Shared operational data table polish */
+.otli-data-table {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.otli-data-table thead th {
+  color: #475569;
+  line-height: 1.4;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.otli-data-table tbody > tr {
+  transition: background-color 150ms ease;
+}
+
+.otli-data-table tbody > tr:hover,
+.otli-data-table tbody > tr:focus-within {
+  background-color: rgba(241, 245, 249, 0.72);
+}
+
+.otli-data-table tbody td {
+  line-height: 1.5;
+}
+
+.otli-data-table td:has(> .table-row-actions) {
+  padding-right: 2rem;
+  white-space: nowrap;
+}
+
+.otli-data-table thead th:last-child {
+  padding-right: 2rem;
+}
+
+/* Reserve a small trailing gutter inside the scroll area to protect row controls. */
+.card .overflow-x-auto:has(> .otli-data-table) {
+  padding-inline-end: 0.75rem;
+}
+
+/* Let overflow tables scroll horizontally without crowding their last column. */
+.card .overflow-x-auto {
+  max-width: 100%;
+  padding-bottom: 0.25rem;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.card .overflow-x-auto::-webkit-scrollbar { height: 7px; }
+.card .overflow-x-auto::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
+.card .overflow-x-auto::-webkit-scrollbar-track { background: transparent; }
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 #f8fafc;
+}
+
+/* Contrast boost for status chips inside tables */
+.otli-data-table .text-amber-700 { color: #92400e; }
+
+
+/* OneTrue 2026 UI refinement: readable data density and compact KPI rhythm. */
+.otli-data-table tbody tr > td { overflow-wrap: anywhere; }
+.otli-data-table tbody tr > td:first-child { color: #0f172a; }
+.otli-data-table tbody tr:focus-within { outline: 2px solid rgba(8,122,85,.18); outline-offset: -2px; }
+.otli-kpi-grid > :is(article, section, div, button) {
+  min-width: 0;
+  border-radius: 1rem;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 10px 24px -18px rgba(15,23,42,.16);
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.otli-kpi-grid > :is(article, section, div, button):focus-within { box-shadow: 0 0 0 3px rgba(8,122,85,.15); }
+.otli-kpi-grid .tabular-nums, .otli-kpi-grid .text-3xl, .otli-kpi-grid .text-4xl { font-variant-numeric: tabular-nums; letter-spacing: -.025em; }
+.otli-inline-filter-select { min-height: 2.625rem; max-width: 100%; border: 1px solid #dbe4ee; border-radius: .75rem; padding: .48rem 2rem .48rem .85rem; background: #fff; color: #334155; font-size: .84rem; font-weight: 600; }
+
+@media (max-width: 767px) {
+  /* A genuine card layout with every existing cell preserved, not just the first columns. */
+  .otli-adaptive-table { display: block !important; min-width: 0 !important; width: 100% !important; background: transparent; border: 0; }
+  .otli-adaptive-table > thead { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+  .otli-adaptive-table > tbody { display: grid !important; gap: .85rem; padding: .875rem !important; background: #f8fafc; border: 0; }
+  .otli-adaptive-table > tbody > tr { display: block !important; min-width: 0; overflow: visible; border: 1px solid #e2e8f0 !important; border-radius: 1rem; background: #fff; padding: .2rem .85rem !important; box-shadow: 0 3px 13px rgba(15,23,42,.04); }
+  .otli-adaptive-table > tbody > tr:hover { background: #fff; border-color: #cbd5e1 !important; }
+  .otli-adaptive-table > tbody > tr > td { display: grid !important; width: 100%; min-width: 0; grid-template-columns: minmax(0,7.25rem) minmax(0,1fr); align-items: start; gap: .65rem; padding: .72rem 0 !important; border: none; border-bottom: 1px solid #f1f5f9; text-align: start !important; white-space: normal !important; overflow-wrap: anywhere; font-size: .825rem; line-height: 1.5; }
+  .otli-adaptive-table > tbody > tr > td:last-child { border-bottom: 0; }
+  .otli-adaptive-table > tbody > tr > td::before { content: attr(data-column-label); font-size: .675rem; font-weight: 650; line-height: 1.5; color: #64748b; letter-spacing: .01em; }
+  .otli-adaptive-table > tbody > tr > td:first-child { display: block !important; padding-top: .95rem !important; font-size: .92rem; }
+  .otli-adaptive-table > tbody > tr > td:first-child::before { content: attr(data-column-label); display: block; margin-bottom: .3rem; }
+  .otli-adaptive-table > tbody > tr > td[data-mobile-span="true"] { display: block !important; text-align: center !important; padding: 1.4rem .5rem !important; }
+  .otli-adaptive-table > tbody > tr > td[data-mobile-span="true"]::before { content: none; }
+  .otli-adaptive-table > tbody > tr > td .table-row-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .otli-adaptive-table > tbody > tr > td:has(> .table-row-actions) { padding-right: 0 !important; }
+  .otli-adaptive-table :is(input, select, button) { max-width: 100%; }
+  .otli-adaptive-table .truncate { white-space: normal !important; overflow-wrap: anywhere; }
+  .otli-adaptive-table tbody td .max-w-\[240px\], .otli-adaptive-table tbody td .max-w-\[320px\] { max-width: 100%; }
+  .card .overflow-x-auto:has(> .otli-adaptive-table),
+  .overflow-x-auto:has(> .otli-adaptive-table) { overflow-x: visible; padding-inline-end: 0 !important; }
+  .otli-kpi-grid { gap: .65rem; }
+  .otli-kpi-grid > :is(article, section, div, button) { padding: .85rem; }
+}
+@media (max-width: 390px) {
+  .otli-adaptive-table > tbody > tr > td { grid-template-columns: minmax(0,6rem) minmax(0,1fr); gap: .4rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .otli-kpi-grid > :is(article, section, div, button), .otli-filter-chip { transition: none; }
+}
+
+
+/* Consistent card-grid density across summary modules */
+@media (max-width: 639px) {
+  .otli-kpi-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .otli-kpi-grid > :is(article, section, div, button) { padding: .85rem; }
+  .otli-kpi-grid .text-xs { overflow-wrap: anywhere; }
+  .otli-kpi-grid .text-3xl { font-size: 1.5rem; line-height: 1.75rem; }
+}
+@media (min-width: 640px) and (max-width: 767px) {
+  .otli-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+
+/* OneTrue module header system: Client Verification is the visual reference.
+   Only presentation classes change. API data, KPI values and actions are untouched. */
+.otli-module-frame {
+  overflow: visible !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+.otli-module-hero {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  min-height: 12rem;
+  padding: 2.1rem 2.5rem 5.65rem;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 1.55rem;
+  background: linear-gradient(110deg, #101d70 0%, #132170 62%, #114177 100%);
+  box-shadow: 0 14px 35px rgba(15, 29, 115, .12);
+  color: #fff;
+}
+.otli-module-hero::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+  background: radial-gradient(circle at 95% 8%, rgba(66, 153, 225, .15), transparent 34%);
+}
+.otli-module-hero > * { position: relative; z-index: 1; }
+.otli-module-hero :is(h1, h2) {
+  margin-top: .42rem;
+  color: #fff !important;
+  font-size: clamp(1.6rem, 2.1vw, 2.35rem) !important;
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -.035em;
+}
+.otli-module-hero :is(p, .text-slate-500, .text-slate-400) {
+  color: #cbd5e1 !important;
+  font-weight: 450;
+}
+.otli-module-hero .text-emerald-700, .otli-module-hero .text-violet-700 {
+  color: #9aefd0 !important;
+}
+.otli-module-hero > div:first-child > div:first-child > div:first-child:is([class*="uppercase"], [class*="tracking-wide"]),
+.otli-module-hero > div:first-child > div:first-child > p:first-child:is([class*="uppercase"]) {
+  color: #9df5d6 !important;
+  font-size: .73rem;
+  font-weight: 750;
+  letter-spacing: .07em;
+}
+.otli-module-hero .btn-primary {
+  border: 1px solid rgba(255,255,255,.95);
+  background: #fff;
+  color: #111e6e;
+  box-shadow: 0 6px 19px rgba(0,0,0,.1);
+}
+.otli-module-hero .btn-primary:hover:not(:disabled) {
+  background: #e9f9f3;
+  box-shadow: 0 10px 24px rgba(0,0,0,.14);
+}
+.otli-module-hero .btn-secondary {
+  border-color: rgba(255,255,255,.24);
+  background: rgba(255,255,255,.1);
+  color: #fff;
+  box-shadow: none;
+}
+.otli-module-hero .btn-secondary:hover:not(:disabled) {
+  border-color: rgba(255,255,255,.45);
+  background: rgba(255,255,255,.18);
+  box-shadow: none;
+}
+/* Other controls, such as Table / Calendar tabs, retain their own selected state. */
+.otli-module-hero [role="group"] [aria-pressed="true"] { color: #087a55; }
+.otli-module-hero--plain {
+  min-height: 0;
+  padding-bottom: 2.15rem;
+}
+.otli-module-kpis {
+  position: relative;
+  z-index: 2;
+  margin: -3.15rem 2rem 0 !important;
+  padding: 0 !important;
+  gap: .9rem;
+}
+.otli-module-kpis > :is(div, button, article, section) {
+  min-width: 0;
+  min-height: 6.65rem;
+  border: 1px solid #e5eaf2 !important;
+  border-radius: 1.05rem !important;
+  background: #fff !important;
+  box-shadow: 0 2px 2px rgba(15,23,42,.02), 0 16px 34px -21px rgba(15,23,42,.22) !important;
+}
+.otli-module-kpis > :is(div, button, article, section) [class*="uppercase"] {
+  font-size: .71rem;
+  line-height: 1.45;
+  letter-spacing: .02em;
+  font-weight: 650;
+}
+.otli-module-kpis > :is(div, button, article, section) :is(.text-3xl, .text-2xl) {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.025em;
+}
+.otli-module-kpis--icons-leading > :is(div, button, article, section) > div.flex:first-child {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+  gap: .85rem;
+}
+.otli-module-kpis--icons-leading > :is(div, button, article, section) > div.flex:first-child > :last-child:is(div, svg) {
+  flex-shrink: 0;
+}
+.otli-module-frame > :not(.otli-module-hero):not(.otli-module-kpis) {
+  min-width: 0;
+}
+.otli-module-frame > :not(.otli-module-hero):not(.otli-module-kpis):last-child {
+  margin-top: 1rem;
+}
+/* Read-only and settings screens still use the shared navy page header. */
+.otli-module-hero.otli-module-standalone {
+  display: block;
+  min-height: 8.75rem;
+  padding-bottom: 2rem;
+}
+.otli-module-hero.otli-module-standalone > * { max-width: 100%; }
+.otli-module-hero.otli-module-standalone :is(.bg-emerald-50, .bg-slate-50) {
+  background: rgba(255,255,255,.12) !important;
+  color: #b7f3da !important;
+}
+/* Keep toolbar and dense tables visually aligned with Client Verification. */
+.otli-module-frame + .card,
+.otli-module-hero.otli-module-standalone + .card {
+  border-color: #e5eaf2;
+  border-radius: 1.35rem;
+}
+
+@media (max-width: 767px) {
+  .otli-module-hero {
+    min-height: 0;
+    padding: 1.5rem 1.25rem 4.7rem;
+    border-radius: 1.35rem;
+  }
+  .otli-module-hero--plain, .otli-module-hero.otli-module-standalone {
+    padding-bottom: 1.5rem;
+  }
+  .otli-module-hero :is(h1,h2) { font-size: 1.65rem !important; }
+  .otli-module-hero .btn-primary, .otli-module-hero .btn-secondary { max-width: 100%; }
+  .otli-module-kpis {
+    margin: -2.65rem .65rem 0 !important;
+    gap: .55rem;
+  }
+  .otli-module-kpis > :is(div, button, article, section) { min-height: 5.75rem; }
+
+
+  /* Three summary cards follow Client Verification's compact 3-up layout. */
+  .otli-module-kpis:has(> :nth-child(3):last-child) {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+  .otli-module-kpis:has(> :nth-child(3):last-child) > :is(div, button, article, section) {
+    padding: .75rem !important;
+  }
+  .otli-module-kpis:has(> :nth-child(3):last-child) [class*="uppercase"] {
+    font-size: .62rem;
+    line-height: 1.35;
+  }
+  .otli-module-kpis--icons-leading:has(> :nth-child(3):last-child) > :is(div, button, article, section) > div.flex:first-child {
+    flex-direction: column-reverse;
+    align-items: flex-start;
+    gap: .45rem;
+  }
+  .otli-module-kpis--icons-leading:has(> :nth-child(3):last-child) > :is(div, button, article, section) > div.flex:first-child > div:last-child {
+    width: 2rem;
+    height: 2rem;
+    border-radius: .65rem;
+  }
+
+  /* The identical shared action button is now positioned in the record-card
+     header at small widths, like the dedicated Client Verification cards. */
+  .otli-adaptive-table > tbody > tr:has(> td > .table-row-actions) {
+    position: relative;
+  }
+  .otli-adaptive-table > tbody > tr:has(> td > .table-row-actions) > td:first-child {
+    padding-right: 3.65rem !important;
+    min-height: 4.35rem;
+  }
+  .otli-adaptive-table > tbody > tr > td:has(> .table-row-actions) {
+    position: absolute;
+    z-index: 2;
+    top: .48rem;
+    right: .5rem;
+    display: flex !important;
+    align-items: flex-start;
+    justify-content: flex-end;
+    width: auto !important;
+    min-width: 0;
+    border: 0 !important;
+    padding: 0 !important;
+    background: transparent;
+  }
+  .otli-adaptive-table > tbody > tr > td:has(> .table-row-actions)::before { display: none !important; }
+  .otli-adaptive-table > tbody > tr > td .table-row-actions {
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    gap: 0;
+  }
+
+}
+@media (max-width: 390px) {
+  .otli-module-kpis { margin-inline: .2rem !important; }
+  .otli-module-kpis > :is(div, button, article, section) { padding: .72rem !important; }
+  .otli-module-kpis .text-3xl { font-size: 1.35rem !important; }
+}
+@media print {
+  .otli-module-hero { background: white !important; color: #0f172a !important; box-shadow: none; }
+  .otli-module-hero :is(h1,h2,p) { color: #0f172a !important; }
+  .otli-module-kpis { margin-top: 1rem !important; }
+}
+
+/* 2026-11-18 responsive operational UI: presentation-only changes. */
+.otli-tracking-controls { min-width: 0; }
+.otli-tracking-switch {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid rgba(255,255,255,.35) !important;
+  background: rgba(255,255,255,.13) !important;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.08);
+}
+.otli-module-hero .otli-tracking-switch > button {
+  min-width: 0;
+  color: #e0eaff !important;
+  border: 1px solid transparent;
+  text-shadow: none;
+  transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+}
+.otli-module-hero .otli-tracking-switch > button:hover:not([aria-pressed="true"]) {
+  background: rgba(255,255,255,.13);
+  color: #fff !important;
+}
+.otli-module-hero .otli-tracking-switch > button[aria-pressed="true"] {
+  background: #fff !important;
+  color: #13236e !important;
+  box-shadow: 0 3px 8px rgba(6,20,59,.16), 0 0 0 1px rgba(255,255,255,.5);
+}
+.otli-module-hero .otli-tracking-switch > button:focus-visible,
+.otli-module-hero .otli-tracking-refresh:focus-visible {
+  outline: 3px solid #8df6d2;
+  outline-offset: 2px;
+}
+
+/* The three tracking KPIs now use the same icon-left layout as Booking Module. */
+.otli-tracking-kpis .otli-tracking-stat { min-width: 0; }
+.otli-tracking-stat-inner { min-width: 0; }
+.otli-tracking-stat-label { overflow-wrap: normal; line-height: 1.35; }
+.otli-tracking-stat-number { max-width: 100%; white-space: nowrap; line-height: 1.15; letter-spacing: -.035em; }
+.otli-tracking-stat--slate { color: #0f172a; }
+.otli-tracking-stat--blue { color: #1d4ed8; }
+.otli-tracking-stat--emerald { color: #047857; }
+.otli-tracking-stat--slate .otli-tracking-stat-icon { color: #334155; background: #f1f5f9; }
+.otli-tracking-stat--blue .otli-tracking-stat-icon { color: #1d4ed8; background: #eff6ff; }
+.otli-tracking-stat--emerald .otli-tracking-stat-icon { color: #047857; background: #ecfdf5; }
+
+/* Compact booking-style action menu and field layout for mobile record cards. */
+.otli-record-card { min-width: 0; transition: box-shadow .15s ease, border-color .15s ease; }
+.otli-record-card:focus-within { border-color: #a7d3c4; box-shadow: 0 0 0 3px rgba(5,150,105,.08); }
+.otli-record-card .otli-record-actions .table-row-actions { display: flex; justify-content: flex-end; gap: .25rem; flex-wrap: nowrap; }
+.otli-record-card .otli-record-actions .table-row-actions > button { width: 2.125rem; height: 2.125rem; min-width: 2.125rem; border-radius: .65rem; }
+.otli-record-card .otli-record-actions .table-row-actions > button:not(:last-child) { display: none; }
+.otli-record-card .otli-record-actions .table-row-actions > button:last-child { background: #f8fafc; color: #334155; }
+.otli-record-card .otli-record-actions .table-row-actions > button:last-child:hover { background: #e2e8f0; }
+.otli-record-card :is(a, button):focus-visible { outline: 2px solid #059669; outline-offset: 2px; }
+
+/* Keep search and complex filter controls together at small widths. */
+
+@media (max-width: 767px) {
+  .otli-tracking-controls { display: flex !important; flex-direction: row !important; align-items: stretch; gap: .5rem; }
+  .otli-tracking-switch { display: flex; min-height: 2.9rem; width: 100%; }
+  .otli-tracking-switch > button { flex: 1 1 0%; justify-content: center; padding: .5rem .6rem !important; font-size: .82rem; }
+  .otli-tracking-refresh { display: inline-flex; width: 2.9rem; min-width: 2.9rem; min-height: 2.9rem; justify-content: center; padding: .65rem !important; font-size: 0 !important; }
+  .otli-tracking-refresh > svg { width: 1.125rem; height: 1.125rem; }
+  .otli-tracking-kpis { gap: .5rem !important; margin-inline: .45rem !important; }
+  .otli-tracking-kpis > .otli-tracking-stat { padding: .7rem !important; min-height: 7.2rem; }
+  .otli-tracking-stat-inner { display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: .45rem; }
+  .otli-tracking-stat-icon { width: 1.95rem !important; height: 1.95rem !important; border-radius: .65rem; }
+  .otli-tracking-stat-icon svg { width: 1rem; height: 1rem; }
+  .otli-tracking-stat-copy { width: 100%; }
+  .otli-tracking-stat-label { font-size: clamp(.58rem, 2.2vw, .68rem) !important; line-height: 1.35; letter-spacing: .01em; text-transform: uppercase; }
+  .otli-tracking-stat-number { margin-top: .3rem !important; font-size: clamp(1.1rem, 5vw, 1.65rem) !important; }
+  .otli-record-card { padding: 1rem; }
+}
+@media (max-width: 340px) {
+  .otli-tracking-switch > button { gap: .25rem; padding-inline: .35rem !important; font-size: .73rem; }
+  .otli-tracking-kpis { margin-inline: .2rem !important; gap: .35rem !important; }
+  .otli-tracking-kpis > .otli-tracking-stat { padding: .55rem !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .otli-tracking-switch > button, .otli-record-card { transition: none; }
+}
+
+
+/* Shared table toolbar design system. One row for search + filter on small screens. */
+.otli-table-toolbar { display: flex; flex-flow: row nowrap; align-items: center; gap: .625rem; min-width: 0; width: 100%; }
+.otli-table-toolbar-search { flex: 1 1 12rem; min-width: 0; position: relative; display: flex; align-items: center; }
+.otli-table-toolbar-search > svg { position: absolute; left: .85rem; top: 50%; transform: translateY(-50%); color: #94a3b8; pointer-events: none; }
+.otli-table-toolbar-search > input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 2.75rem; height: 2.75rem; padding: .625rem .75rem .625rem 2.65rem; background: #fff; border: 1px solid #d7e2ee; border-radius: .875rem; color: #172554; font-size: .875rem; font-weight: 500; outline: none; transition: box-shadow .15s, border-color .15s; }
+.otli-table-toolbar-search > input::placeholder { color: #8192ad; opacity: 1; overflow: hidden; text-overflow: ellipsis; }
+.otli-table-toolbar-search > input:focus-visible, .otli-table-toolbar-select:focus-visible { border-color: #087a55; box-shadow: 0 0 0 3px rgba(8,122,85,.14); }
+.otli-table-toolbar-filter { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; flex: 0 0 auto; height: 2.75rem; min-width: 2.75rem; padding: 0 .85rem; border: 1px solid #d7e2ee; border-radius: .875rem; color: #334155; background: white; font-size: .875rem; font-weight: 650; white-space: nowrap; cursor: pointer; transition: border-color .15s, background .15s, box-shadow .15s; }
+.otli-table-toolbar-filter:hover:not(:disabled) { border-color: #9cceb9; background: #f0faf6; }
+.otli-table-toolbar-filter[aria-expanded="true"] { background: #ecfdf5; border-color: #10b981; color: #065f46; }
+.otli-table-toolbar-filter:focus-visible, .otli-table-toolbar-tab:focus-visible { outline: 3px solid rgba(8,122,85,.25); outline-offset: 2px; }
+.otli-table-toolbar-filter:disabled { cursor: not-allowed; opacity: .5; }
+.otli-table-toolbar-count { display: grid; place-items: center; min-width: 1.35rem; height: 1.35rem; padding: 0 .3rem; background: #0f1d73; color: white; border-radius: 99px; font-size: .7rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+.otli-table-toolbar-tabs { display: flex; flex-flow: row nowrap; gap: .45rem; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 100%; padding: .125rem; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.otli-table-toolbar-tabs::-webkit-scrollbar { display: none; }
+.otli-table-toolbar-tab { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; min-height: 2.65rem; padding: .4rem .85rem; gap: .45rem; border: 1px solid #e2e8f0; border-radius: 999px; background: #fff; color: #334155; box-shadow: 0 1px 4px rgba(15,23,42,.06); font-size: .8rem; font-weight: 650; white-space: nowrap; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+.otli-table-toolbar-tab[aria-pressed="true"] { border-color: #0f1d73; background: #0f1d73; color: #fff; box-shadow: none; }
+.otli-table-toolbar-tab:hover:not([aria-pressed="true"]) { background: #f8fafc; border-color: #a5b4c7; }
+.otli-table-toolbar-tab-count { border-radius: 999px; background: #eef2f7; color: #475569; padding: .1rem .45rem; font-size: .72rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+.otli-table-toolbar-tab[aria-pressed="true"] .otli-table-toolbar-tab-count { background: rgba(255,255,255,.2); color: #fff; }
+.otli-table-toolbar-select { flex: 0 1 auto; min-width: 0; height: 2.75rem; padding: 0 2rem 0 .75rem; border: 1px solid #d7e2ee; background: #fff; border-radius: .875rem; color: #334155; font-size: .8rem; font-weight: 650; outline: none; }
+.otli-table-toolbar-export { flex: 0 0 auto; min-height: 2.75rem; white-space: nowrap; }
+@media (max-width: 767px) {
+  .otli-table-toolbar { gap: .5rem; }
+  .otli-table-toolbar--tabs { flex-wrap: wrap; }
+  .otli-table-toolbar--tabs > .otli-table-toolbar-tabs { flex: 1 0 100%; width: 100%; max-width: 100%; }
+  .otli-table-toolbar-filter { padding-inline: .7rem; }
+  .otli-table-toolbar-filter-text { display: none; }
+  .otli-table-toolbar-export { flex: 1 0 100%; justify-content: center; order: 4; }
+  .otli-table-toolbar-search { flex: 1 1 0%; }
+}
+@media (max-width: 420px) {
+  .otli-table-toolbar-tabs { gap: .35rem; }
+  .otli-table-toolbar-tab { padding: .4rem .7rem; font-size: .76rem; }
+  .otli-table-toolbar-search > input { font-size: .8rem; }
+  .otli-table-toolbar-select { max-width: 7.5rem; }
+}
+@media (prefers-reduced-motion: reduce) { .otli-table-toolbar :is(input, button, select) { transition: none; } }
+.otli-table-toolbar > div:has(> .otli-table-toolbar-filter) { flex: 0 0 auto; min-width: 0; }
+.otli-toolbar-with-export > .otli-table-toolbar-search { order: 1; }
+.otli-toolbar-with-export > div:has(> .otli-table-toolbar-filter) { order: 2; }
+.otli-toolbar-with-export > [data-export-control] { order: 3; }
+@media(max-width: 767px) { .otli-toolbar-with-export { flex-wrap: wrap; } .otli-toolbar-with-export > [data-export-control] { flex: 1 0 100%; justify-content: center; width: 100%; } }

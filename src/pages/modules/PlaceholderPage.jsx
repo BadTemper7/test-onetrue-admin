@@ -6,7 +6,7 @@ const PlaceholderPage = ({ title, description, moduleName = "CMS Module", checkl
 
   return (
     <div className="space-y-6">
-      <div className="card p-5">
+      <div className="card p-5 otli-module-hero otli-module-standalone">
         <div className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-emerald-700">
           <ClipboardList size={15} /> {moduleName}
         </div>

@@ -14,14 +14,14 @@ import {
 } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
-import TableCrudActions from "../../components/ui/TableCrudActions"
-import Pagination from "../../components/ui/Pagination"
+import TableCrudActions from "../../components/table/TableCrudActions"
+import Pagination from "../../components/table/Pagination"
 import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
 import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
 import ModernDateInput from "../../components/ModernDateInput"
 import { api, getApiError } from "../../lib/api"
 import { usePagination } from "../../hooks/usePagination"
-import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import TableLoadingRow from "../../components/table/TableLoadingRow"
 
 const emptyCounts = { 20: 0, 40: 0, total: 0 }
 const emptyReport = {
@@ -35,7 +35,6 @@ const emptyReport = {
   totalFeu: 0,
   releasedContainers: 0,
   totalRecordedRevenue: 0,
-  releaseReports: [],
   clientRevenue: [],
   clientOptions: [],
 }
@@ -63,6 +62,7 @@ const formatDateTime = (value) => {
   return new Intl.DateTimeFormat("en-PH", {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone: "Asia/Manila",
   }).format(new Date(value))
 }
 
@@ -113,8 +113,6 @@ const getPeriodRange = (period, referenceDate = new Date(), specificDate = "") =
   return { startDate: "", endDate: "" }
 }
 
-const escapeCsv = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`
-
 const formatCurrency = (value) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -122,8 +120,36 @@ const formatCurrency = (value) =>
     maximumFractionDigits: 2,
   }).format(Number(value) || 0)
 
+const initialFilters = { startDate: "", endDate: "", clientId: "", loadStatus: "all", rateType: "all", recordSource: "all" }
+
+// Keep the icon and value in one compact row on phones, then give labels their
+// own full-width line. Longer totals get a full-width mobile card.
+const ReportOverviewCard = ({ icon: Icon, label, value, expanded = false }) => (
+  <article
+    className={`card grid min-w-0 max-w-full grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-x-2.5 gap-y-1 overflow-hidden border border-slate-200/80 p-4 sm:grid-cols-[2.75rem_minmax(0,1fr)] sm:gap-x-3 sm:p-5 print:border print:shadow-none ${
+      expanded ? "col-span-2 sm:col-span-1" : ""
+    }`}
+  >
+    <span className="row-start-1 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-950 text-white sm:row-span-2 sm:h-11 sm:w-11 sm:rounded-2xl">
+      <Icon size={19} aria-hidden="true" />
+    </span>
+    <p
+      className="min-w-0 max-w-full text-xl font-black leading-tight tracking-tight tabular-nums text-slate-950 sm:text-2xl [overflow-wrap:anywhere]"
+      title={String(value)}
+    >
+      {value}
+    </p>
+    <p className="col-span-2 mt-1 max-w-full text-[10px] font-bold uppercase leading-snug tracking-wide text-slate-600 sm:col-span-1 sm:mt-0 sm:text-xs [overflow-wrap:break-word]">
+      {label}
+    </p>
+  </article>
+)
+
 const AdminReports = () => {
-  const [filters, setFilters] = useState({ startDate: "", endDate: "", clientId: "", loadStatus: "all", rateType: "all", recordSource: "all" })
+  // Draft values change with the controls. Queries and exports always use the
+  // filters last applied by the user, never unsaved form changes.
+  const [filters, setFilters] = useState(initialFilters)
+  const [appliedFilters, setAppliedFilters] = useState(initialFilters)
   const [datePeriod, setDatePeriod] = useState("all_time")
   const [specificDate, setSpecificDate] = useState(formatDateOnly(new Date()))
   const [contentView, setContentView] = useState("all")
@@ -131,46 +157,80 @@ const AdminReports = () => {
   const [generatedAt, setGeneratedAt] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [releaseItems, setReleaseItems] = useState([])
+  const [releasePage, setReleasePage] = useState(1)
+  const [releasePageSize, setReleasePageSize] = useState(10)
+  const [releaseMeta, setReleaseMeta] = useState({ totalItems: 0, totalPages: 1 })
+  const [releaseLoading, setReleaseLoading] = useState(false)
+  const [releaseError, setReleaseError] = useState("")
+  const [exportingSection, setExportingSection] = useState("")
+  const [exportError, setExportError] = useState("")
+  const [refreshKey, setRefreshKey] = useState(0)
   const [selectedReportRow, setSelectedReportRow] = useState(null)
 
-  const reportPaginationKey = `${generatedAt}|${filters.startDate}|${filters.endDate}|${filters.clientId}|${filters.loadStatus}|${filters.rateType}|${filters.recordSource}`
-  const revenuePagination = usePagination(report.clientRevenue || [], 10, `revenue|${reportPaginationKey}`)
-  const releasePagination = usePagination(report.releaseReports || [], 10, `release|${reportPaginationKey}`)
-
-  const loadReport = async (nextFilters = filters) => {
-    try {
-      setLoading(true)
-      setError("")
-      const { data } = await api.get("/admin/reports/yard-containers", { params: nextFilters })
-      setReport(data.report || emptyReport)
-      setGeneratedAt(data.generatedAt || new Date().toISOString())
-    } catch (err) {
-      setError(getApiError(err))
-    } finally {
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
-    loadReport({ startDate: "", endDate: "", clientId: "", loadStatus: "all", rateType: "all", recordSource: "all" })
-  }, [])
+    const controller = new AbortController()
+    const loadOverview = async () => {
+      try {
+        setLoading(true)
+        setError("")
+        const { data } = await api.get("/admin/reports/overview", {
+          params: appliedFilters, signal: controller.signal,
+        })
+        if (controller.signal.aborted) return
+        setReport(data.report || emptyReport)
+        setGeneratedAt(data.generatedAt || new Date().toISOString())
+      } catch (err) {
+        if (!controller.signal.aborted) setError(getApiError(err))
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
+      }
+    }
+    loadOverview()
+    return () => controller.abort()
+  }, [appliedFilters, refreshKey])
 
-  const rows = useMemo(
-    () => [
-      ["Total Containers in Yard", "All sizes", report.totalContainersInYard],
-      ["Empty Container", "20 FT", report.empty?.[20] || 0],
-      ["Empty Container", "40 FT", report.empty?.[40] || 0],
-      ["Laden Container", "20 FT", report.laden?.[20] || 0],
-      ["Laden Container", "40 FT", report.laden?.[40] || 0],
-      ["Local Container", "20 FT", report.local?.[20] || 0],
-      ["Local Container", "40 FT", report.local?.[40] || 0],
-      ["International Container", "20 FT", report.international?.[20] || 0],
-      ["International Container", "40 FT", report.international?.[40] || 0],
-      ["Capacity Equivalent", "TEU", report.totalTeu || 0],
-      ["Capacity Equivalent", "FEU", report.totalFeu || 0],
-    ],
-    [report],
-  )
+  const showReleases = contentView === "all" || contentView === "releases"
+  useEffect(() => {
+    if (!showReleases) return undefined
+    const controller = new AbortController()
+    const loadReleases = async () => {
+      try {
+        setReleaseLoading(true)
+        setReleaseError("")
+        setReleaseItems([])
+        const { data } = await api.get("/admin/reports/releases", {
+          params: { ...appliedFilters, page: releasePage, pageSize: releasePageSize },
+          signal: controller.signal,
+        })
+        if (controller.signal.aborted) return
+        setReleaseItems(data.items || [])
+        setReleaseMeta(data.pagination || { totalItems: 0, totalPages: 1 })
+        if (data.pagination?.page && data.pagination.page !== releasePage) {
+          setReleasePage(data.pagination.page)
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) setReleaseError(getApiError(err))
+      } finally {
+        if (!controller.signal.aborted) setReleaseLoading(false)
+      }
+    }
+    loadReleases()
+    return () => controller.abort()
+  }, [appliedFilters, releasePage, releasePageSize, showReleases, refreshKey])
+
+  const reportPaginationKey = `${generatedAt}|${appliedFilters.startDate}|${appliedFilters.endDate}|${appliedFilters.clientId}|${appliedFilters.loadStatus}|${appliedFilters.rateType}|${appliedFilters.recordSource}`
+  const revenuePagination = usePagination(report.clientRevenue || [], 10, `revenue|${reportPaginationKey}`)
+  const releasePagination = {
+    page: releasePage,
+    setPage: setReleasePage,
+    pageSize: releasePageSize,
+    setPageSize: (value) => { setReleasePageSize(Number(value)); setReleasePage(1) },
+    totalItems: releaseMeta.totalItems,
+    totalPages: releaseMeta.totalPages,
+    startItem: releaseMeta.totalItems ? (releasePage - 1) * releasePageSize + 1 : 0,
+    endItem: Math.min(releasePage * releasePageSize, releaseMeta.totalItems),
+  }
 
   const activeRange = useMemo(() => getPeriodRange(datePeriod, new Date(), specificDate), [datePeriod, specificDate])
 
@@ -196,62 +256,49 @@ const AdminReports = () => {
   const applyFilters = () => {
     const nextFilters = { ...filters, ...getPeriodRange(datePeriod, new Date(), specificDate) }
     setFilters(nextFilters)
-    loadReport(nextFilters)
+    setReleasePage(1)
+    setSelectedReportRow(null)
+    setExportError("")
+    setAppliedFilters(nextFilters)
   }
 
   const resetFilters = () => {
-    const nextFilters = { startDate: "", endDate: "", clientId: "", loadStatus: "all", rateType: "all", recordSource: "all" }
+    const nextFilters = { ...initialFilters }
     setDatePeriod("all_time")
     setSpecificDate(formatDateOnly(new Date()))
     setContentView("all")
     setFilters(nextFilters)
-    loadReport(nextFilters)
+    setReleasePage(1)
+    setSelectedReportRow(null)
+    setExportError("")
+    setAppliedFilters(nextFilters)
   }
 
-  const exportCsv = () => {
-    const selectedClient = report.clientOptions?.find((client) => client.id === filters.clientId)?.name || "All Clients"
-    const selectedContent = contentOptions.find((option) => option.value === contentView)?.label || "All Analytics"
-    const selectedPeriod = periodOptions.find((option) => option.value === datePeriod)?.label || "All Time"
-    const csvRows = [
-      ["OneTrue Yard Container Report"],
-      ["Generated", formatDateTime(generatedAt)],
-      ["Content", selectedContent],
-      ["Period", selectedPeriod],
-      ["Date Range", periodLabel],
-      ["Client", selectedClient],
-      ["Container Load", filters.loadStatus === "all" ? "All" : filters.loadStatus],
-      ["Rate Classification", filters.rateType === "all" ? "All" : filters.rateType],
-      ["Record Source", filters.recordSource === "all" ? "All" : filters.recordSource],
-    ]
-
-    if (["all", "overview", "containers", "capacity"].includes(contentView)) {
-      csvRows.push([], ["Report", "Container Size / Unit", "Quantity"], ...rows)
+  const exportCsv = async (section = contentView) => {
+    if (exportingSection || loading || (showReleases && releaseLoading)) return
+    setExportingSection(section)
+    setExportError("")
+    try {
+      // No page/pageSize is supplied: the server streams every record that
+      // matches the applied filters, regardless of the visible table page.
+      const { data } = await api.get("/admin/reports/export", {
+        params: { ...appliedFilters, section },
+        responseType: "blob",
+        timeout: 0,
+      })
+      const url = URL.createObjectURL(data)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `yard-report-${section}-${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (err) {
+      setExportError(getApiError(err))
+    } finally {
+      setExportingSection("")
     }
-
-    if (["all", "revenue"].includes(contentView)) {
-      csvRows.push(
-        [],
-        ["Client Revenue", "Completed Releases", "Subtotal", "VAT", "Total Revenue"],
-        ...(report.clientRevenue || []).map((client) => [client.clientName, client.bookingCount, client.subtotal, client.vat, client.revenue]),
-      )
-    }
-
-    if (["all", "releases"].includes(contentView)) {
-      csvRows.push(
-        [],
-        ["Release Report", "Client", "Container", "Record Source", "Load Status", "Classification", "Released At", "Subtotal", "VAT", "Gate-In Payment", "Gate-Out Payment", "Total Billing", "Recorded Revenue"],
-        ...(report.releaseReports || []).map((item) => [item.reportNumber, item.clientName, item.containerNumber, item.recordSource, item.containerLoadStatus, item.rateType, formatDateTime(item.releasedAt), item.billingSubtotal, item.vatAmount, item.gateInPaymentTotal, item.gateOutPaymentTotal, item.totalBillingAmount, item.revenueTotal]),
-      )
-    }
-
-    const csv = csvRows.map((row) => row.map(escapeCsv).join(",")).join("\n")
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `yard-container-report-${new Date().toISOString().slice(0, 10)}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
   }
 
   const summaryCards = [
@@ -261,38 +308,37 @@ const AdminReports = () => {
     { label: "Laden Containers", value: report.laden?.total || 0, icon: Boxes },
     { label: "Local Containers", value: report.local?.total || 0, icon: Warehouse },
     { label: "International", value: report.international?.total || 0, icon: Ship },
-    { label: "Completed Releases", value: report.releasedContainers || 0, icon: FileText },
-    { label: "Recorded Revenue", value: formatCurrency(report.totalRecordedRevenue), icon: Download },
+    { label: "Completed Releases", value: report.releasedContainers || 0, icon: FileText, expanded: true },
+    { label: "Recorded Revenue", value: formatCurrency(report.totalRecordedRevenue), icon: Download, expanded: true },
   ]
 
   const showOverview = contentView === "all" || contentView === "overview"
   const showContainers = contentView === "all" || contentView === "containers"
   const showRevenue = contentView === "all" || contentView === "revenue"
-  const showReleases = contentView === "all" || contentView === "releases"
   const showCapacity = contentView === "all" || contentView === "capacity"
 
   return (
     <div className="space-y-6 print:space-y-4">
-      <div className="card p-5 print:shadow-none">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+      <div className="card p-5 print:shadow-none otli-module-frame">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between otli-module-hero otli-module-hero--plain">
           <div>
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">Analytics Module</div>
             <h2 className="mt-1 text-2xl font-black text-slate-950">Yard and Revenue Analytics</h2>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
-              Choose the analytics content and reporting period you need instead of loading every section at once.
+              Overview totals cover all matching records. Release history is paginated; CSV exports include every record matching the applied filters.
             </p>
             <p className="mt-2 text-xs font-bold text-slate-400">Generated: {formatDateTime(generatedAt)}</p>
           </div>
 
           <div className="flex flex-wrap gap-2 print:hidden">
-            <button type="button" className="btn-secondary" onClick={() => loadReport()} disabled={loading}>
+            <button type="button" className="btn-secondary" onClick={() => setRefreshKey((key) => key + 1)} disabled={loading || releaseLoading}>
               <RefreshCw size={17} /> {loading ? "Loading..." : "Refresh"}
             </button>
             <button type="button" className="btn-secondary" onClick={() => window.print()}>
               <Printer size={17} /> Print
             </button>
-            <button type="button" className="btn-primary" onClick={exportCsv}>
-              <Download size={17} /> Export CSV
+            <button type="button" className="btn-primary" onClick={() => exportCsv(contentView)} disabled={loading || releaseLoading || Boolean(exportingSection)}>
+              <Download size={17} /> {exportingSection === contentView ? "Exporting..." : "Export CSV"}
             </button>
           </div>
         </div>
@@ -371,7 +417,7 @@ const AdminReports = () => {
           </div>
 
           <div className="mt-3 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">
-            <CalendarRange size={15} /> {datePeriod === "specific_date" ? "Specific Date" : "Active period"}: {periodLabel}
+            <CalendarRange size={15} /> Selected period (click Apply to update): {periodLabel}
           </div>
         </div>
 
@@ -384,12 +430,15 @@ const AdminReports = () => {
             <LayoutDashboard size={18} className="text-emerald-700" />
             <h3 className="font-black text-slate-900">Overview</h3>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {summaryCards.map(({ label, value, icon: Icon }) => (
-              <div key={label} className="card flex items-center gap-4 p-5 print:border print:shadow-none">
-                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-950 text-white"><Icon size={22} /></div>
-                <div><div className="text-2xl font-black text-slate-950">{value}</div><div className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</div></div>
-              </div>
+          <div className="otli-kpi-grid grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {summaryCards.map(({ label, value, icon, expanded }) => (
+              <ReportOverviewCard
+                key={label}
+                icon={icon}
+                label={label}
+                value={value}
+                expanded={expanded}
+              />
             ))}
           </div>
         </section>
@@ -412,12 +461,17 @@ const AdminReports = () => {
 
       {showRevenue && (
         <div className="card overflow-hidden print:border print:shadow-none">
-          <div className="border-b border-slate-200 p-5">
-            <h3 className="text-lg font-black text-slate-950">Revenue by Client</h3>
-            <p className="mt-1 text-sm font-semibold text-slate-500">Ranks clients by total approved Gate-In and Gate-Out payments for releases completed within the selected period.</p>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-5">
+            <div>
+              <h3 className="text-lg font-black text-slate-950">Revenue by Client</h3>
+              <p className="mt-1 text-sm font-semibold text-slate-500">Ranks clients across all matching completed releases, not just the visible page.</p>
+            </div>
+            <button type="button" className="btn-secondary print:hidden" onClick={() => exportCsv("revenue")} disabled={loading || releaseLoading || Boolean(exportingSection)}>
+              <Download size={16} /> {exportingSection === "revenue" ? "Exporting..." : "Export All Filtered"}
+            </button>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-sm">
+            <table className="otli-data-table w-full min-w-[760px] text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-5 py-3">Rank</th>
@@ -472,12 +526,17 @@ const AdminReports = () => {
 
       {showReleases && (
         <div className="card overflow-hidden print:border print:shadow-none">
-          <div className="border-b border-slate-200 p-5">
-            <h3 className="text-lg font-black text-slate-950">Release Container History</h3>
-            <p className="mt-1 text-sm font-semibold text-slate-500">Generated automatically after Gate-Out completion. Each row is the final revenue snapshot for one released container.</p>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-5">
+            <div>
+              <h3 className="text-lg font-black text-slate-950">Release Container History</h3>
+              <p className="mt-1 text-sm font-semibold text-slate-500">Showing one page at a time. Export includes all matching Gate-Out completions.</p>
+            </div>
+            <button type="button" className="btn-secondary print:hidden" onClick={() => exportCsv("releases")} disabled={loading || releaseLoading || Boolean(exportingSection)}>
+              <Download size={16} /> {exportingSection === "releases" ? "Exporting..." : "Export All Filtered"}
+            </button>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px] text-left text-sm">
+            <table className="otli-data-table w-full min-w-[1050px] text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-5 py-3">Report</th>
@@ -497,8 +556,8 @@ const AdminReports = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {loading && (report.releaseReports || []).length === 0 && <TableLoadingRow colSpan={10} rows={6} actionColumn label="Loading release report" />}
-                {releasePagination.paginatedItems.map((item) => (
+                {releaseLoading && <TableLoadingRow colSpan={14} rows={6} actionColumn label="Loading release report" />}
+                {!releaseLoading && releaseItems.map((item) => (
                   <tr key={item.id}>
                     <td className="px-5 py-4 font-black text-emerald-700">{item.reportNumber}</td>
                     <td className="px-5 py-4 font-black text-slate-950">{item.clientName}</td>
@@ -525,9 +584,9 @@ const AdminReports = () => {
                     </td>
                   </tr>
                 ))}
-                {!loading && (report.releaseReports || []).length === 0 && (
+                {!releaseLoading && !releaseError && releaseItems.length === 0 && (
                   <tr>
-                    <td colSpan="10" className="px-5 py-10 text-center font-bold text-slate-500">
+                    <td colSpan="14" className="px-5 py-10 text-center font-bold text-slate-500">
                       No release completion reports found for the selected filters.
                     </td>
                   </tr>
@@ -536,7 +595,7 @@ const AdminReports = () => {
             </table>
           </div>
           <div className="print:hidden">
-            <Pagination {...releasePagination} pageSizeOptions={[10]} />
+            <Pagination {...releasePagination} pageSizeOptions={[10, 20, 50, 100]} />
           </div>
         </div>
       )}

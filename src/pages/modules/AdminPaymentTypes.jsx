@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { TableToolbar, TableSearchField, TableToolbarSelect, TableStatusTabs } from "../../components/table/TableToolbar";
+import { useEffect, useMemo, useState } from "react"
 import {
   Building2,
   CreditCard,
@@ -6,18 +7,15 @@ import {
   Plus,
   QrCode,
   RefreshCw,
-  Search,
-  SlidersHorizontal,
   Smartphone,
-} from "lucide-react"
+ } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
-import Pagination from "../../components/ui/Pagination"
-import TableCrudActions from "../../components/ui/TableCrudActions"
-import { useClickOutside } from "../../hooks/useClickOutside"
+import Pagination from "../../components/table/Pagination"
+import TableCrudActions from "../../components/table/TableCrudActions"
 import { usePagination } from "../../hooks/usePagination"
 import { api, getApiError, resolveFileUrl } from "../../lib/api"
-import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import TableLoadingRow from "../../components/table/TableLoadingRow"
 
 const initialForm = {
   type: "bank",
@@ -38,8 +36,8 @@ const maskAccount = (value = "") => {
 
 const AdminPaymentTypes = () => {
   const [paymentTypes, setPaymentTypes] = useState([])
+  const [paymentTypeStats, setPaymentTypeStats] = useState({ total: 0, active: 0, banks: 0, wallets: 0 })
   const [filters, setFilters] = useState({ search: "", type: "all", status: "all" })
-  const [showFilters, setShowFilters] = useState(false)
   const [form, setForm] = useState(initialForm)
   const [editing, setEditing] = useState(null)
   const [selectedPaymentType, setSelectedPaymentType] = useState(null)
@@ -47,15 +45,17 @@ const AdminPaymentTypes = () => {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [alert, setAlert] = useState({ type: "", message: "" })
-  const filterRef = useRef(null)
 
-  useClickOutside(filterRef, () => setShowFilters(false), showFilters)
 
   const loadPaymentTypes = async () => {
     try {
       setLoading(true)
-      const { data } = await api.get("/admin/payment-types")
-      setPaymentTypes((data.paymentTypes || []).filter((item) => item.type !== "cash"))
+      const [listResponse, statsResponse] = await Promise.all([
+        api.get("/admin/payment-types"),
+        api.get("/admin/payment-types/stats"),
+      ])
+      setPaymentTypes((listResponse.data.paymentTypes || []).filter((item) => item.type !== "cash"))
+      setPaymentTypeStats(statsResponse.data.stats || { total: 0, active: 0, banks: 0, wallets: 0 })
     } catch (error) {
       setAlert({ type: "error", message: getApiError(error) })
     } finally {
@@ -146,14 +146,13 @@ const AdminPaymentTypes = () => {
     }
   }
 
-  const activeCount = paymentTypes.filter((item) => item.status === "active").length
-  const banks = paymentTypes.filter((item) => item.type === "bank").length
-  const wallets = paymentTypes.filter((item) => item.type === "ewallet").length
+  // KPI cards come from the database-wide /stats endpoint, not the table rows.
+  const { active: activeCount, banks, wallets } = paymentTypeStats
 
   return (
     <div className="space-y-6">
-      <section className="card p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <section className="card p-5 otli-module-frame">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between otli-module-hero">
           <div>
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">Billing Management</div>
             <h2 className="mt-1 text-2xl font-black text-slate-950">Payment Types</h2>
@@ -167,7 +166,7 @@ const AdminPaymentTypes = () => {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 md:grid-cols-3">
+        <div className="otli-kpi-grid mt-5 grid gap-4 md:grid-cols-3 otli-module-kpis otli-module-kpis--icons-leading">
           <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
             <div className="flex items-center justify-between"><div><div className="text-xs font-black uppercase tracking-wide text-emerald-600">Active Methods</div><div className="mt-2 text-3xl font-black text-emerald-700">{activeCount}</div></div><div className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-emerald-700 shadow-sm"><CreditCard size={20} /></div></div>
           </div>
@@ -187,44 +186,30 @@ const AdminPaymentTypes = () => {
             <h3 className="text-lg font-black text-slate-950">Available Payment Accounts</h3>
             <p className="text-sm font-semibold text-slate-500">Search and filter the payment methods displayed to clients.</p>
           </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative" data-field-control>
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
-              <input className="input w-full !rounded-2xl !py-3 !pl-10 !pr-4 text-sm sm:w-[320px]" placeholder="Search payment account" value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} />
-            </div>
-            <div className="relative" ref={filterRef}>
-              <button type="button" onClick={() => setShowFilters((current) => !current)} className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 sm:w-auto">
-                <SlidersHorizontal size={18} /> Filters
-              </button>
-              {showFilters && (
-                <div className="absolute right-0 z-40 mt-2 w-[290px] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <p className="text-sm font-black text-slate-950">Filter Payment Types</p>
-                    <button type="button" onClick={() => setFilters((current) => ({ ...current, type: "all", status: "all" }))} className="text-xs font-black text-emerald-700">Reset</button>
-                  </div>
-                  <div className="mt-4 space-y-4">
-                    <label className="block">
-                      <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Type</span>
-                      <select className="input !py-3" value={filters.type} onChange={(event) => setFilters((current) => ({ ...current, type: event.target.value }))}>
-                        <option value="all">All types</option><option value="bank">Bank</option><option value="ewallet">eWallet</option>
-                      </select>
-                    </label>
-                    <label className="block">
-                      <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Status</span>
-                      <select className="input !py-3" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
-                        <option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option>
-                      </select>
-                    </label>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+          <TableToolbar withTabs>
+            <TableSearchField
+ placeholder="Search payment account"
+ value={filters.search}
+ onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+ ariaLabel="Search records"
+ />
+            <>
+    <TableToolbarSelect label="Payment account type" value={filters.type} onChange={(event) => setFilters((current) => ({ ...current, type: event.target.value }))}>
+      <option value="all">All types</option><option value="bank">Bank</option><option value="ewallet">eWallet</option>
+    </TableToolbarSelect>
+    <TableStatusTabs
+      label="Payment account status"
+      value={filters.status}
+      onChange={(status) => setFilters((current) => ({ ...current, status }))}
+      options={[{ value: "all", label: "All" }, { value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }]}
+    />
+  </>
+          </TableToolbar>
         </div>
 
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">Showing {filteredItems.length} of {paymentTypes.length} payment types</div>
         <div className="overflow-x-auto">
-          <table className="min-w-[1050px] w-full text-left text-sm">
+          <table className="otli-data-table min-w-[1050px] w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs font-black uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-4">Payment Type</th><th className="px-5 py-4">Account Details</th><th className="px-5 py-4">QR</th><th className="px-5 py-4">Status</th><th className="px-5 py-4 text-right">Actions</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {loading && filteredItems.length === 0 && <TableLoadingRow colSpan={5} rows={6} actionColumn label="Loading payment types" />}

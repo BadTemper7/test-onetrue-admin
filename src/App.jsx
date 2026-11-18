@@ -1,30 +1,33 @@
+import { Suspense, lazy } from "react"
 import { Navigate, Outlet, Route, Routes } from "react-router-dom"
 import Layout from "./components/layout/Layout"
 import ProtectedRoute from "./components/auth/ProtectedRoute"
 import PermissionRoute from "./components/auth/PermissionRoute"
 import FormFieldValidation from "./components/FormFieldValidation"
+import AdaptiveTables from "./components/table/AdaptiveTables"
 import PageHelmet from "./components/meta/PageHelmet"
 import Login from "./pages/Login"
-import Dashboard from "./pages/Dashboard"
-import AdminAccounts from "./pages/modules/AdminAccounts"
-import AdminClients from "./pages/modules/AdminClients"
-import AdminBookings from "./pages/modules/AdminBookings"
-import AdminPreAdvice from "./pages/modules/AdminPreAdvice"
-import AdminGateIn from "./pages/modules/AdminGateIn"
-import AdminInventory from "./pages/modules/AdminInventory"
-import AdminStorageMonitoring from "./pages/modules/AdminStorageMonitoring"
-import AdminYardAreas from "./pages/modules/AdminYardAreas"
-import AdminRateSetup from "./pages/modules/AdminRateSetup"
-import AdminPaymentTypes from "./pages/modules/AdminPaymentTypes"
-import AdminBilling from "./pages/modules/AdminBilling"
-import AdminGateOut from "./pages/modules/AdminGateOut"
-import AdminGateOutCalendar from "./pages/modules/AdminGateOutCalendar"
-import AdminReleaseContainer from "./pages/modules/AdminReleaseContainer"
-import AdminReports from "./pages/modules/AdminReports"
-import AdminPaymentHistory from "./pages/modules/AdminPaymentHistory"
-import AdminAuditLogs from "./pages/modules/AdminAuditLogs"
-import AdminSecuritySettings from "./pages/modules/AdminSecuritySettings"
-import PlaceholderPage from "./pages/modules/PlaceholderPage"
+const Dashboard = lazy(() => import("./pages/Dashboard"))
+const AdminAccounts = lazy(() => import("./pages/modules/AdminAccounts"))
+const AdminClients = lazy(() => import("./pages/modules/AdminClients"))
+const AdminBookings = lazy(() => import("./pages/modules/AdminBookings"))
+const AdminPreAdvice = lazy(() => import("./pages/modules/AdminPreAdvice"))
+const AdminGateIn = lazy(() => import("./pages/modules/AdminGateIn"))
+const AdminInventory = lazy(() => import("./pages/modules/AdminInventory"))
+const AdminStorageMonitoring = lazy(() => import("./pages/modules/AdminStorageMonitoring"))
+const AdminYardAreas = lazy(() => import("./pages/modules/AdminYardAreas"))
+const AdminRateSetup = lazy(() => import("./pages/modules/AdminRateSetup"))
+const AdminPaymentTypes = lazy(() => import("./pages/modules/AdminPaymentTypes"))
+const AdminBilling = lazy(() => import("./pages/modules/AdminBilling"))
+const AdminGateOut = lazy(() => import("./pages/modules/AdminGateOut"))
+const AdminGateOutCalendar = lazy(() => import("./pages/modules/AdminGateOutCalendar"))
+const AdminReleaseContainer = lazy(() => import("./pages/modules/AdminReleaseContainer"))
+const AdminReports = lazy(() => import("./pages/modules/AdminReports"))
+const AdminPaymentHistory = lazy(() => import("./pages/modules/AdminPaymentHistory"))
+const AdminAuditLogs = lazy(() => import("./pages/modules/AdminAuditLogs"))
+const AdminEmailMonitoring = lazy(() => import("./pages/modules/AdminEmailMonitoring"))
+const AdminSecuritySettings = lazy(() => import("./pages/modules/AdminSecuritySettings"))
+const PlaceholderPage = lazy(() => import("./pages/modules/PlaceholderPage"))
 
 const AdminShell = () => <Layout><Outlet /></Layout>
 const ProtectedModule = ({ moduleName, action = "view", allowedRoles, children }) => (
@@ -32,7 +35,11 @@ const ProtectedModule = ({ moduleName, action = "view", allowedRoles, children }
     {children}
   </PermissionRoute>
 )
-const TitledPage = ({ title, children }) => <><PageHelmet title={title} />{children}</>
+const TitledPage = ({ title, children }) => (
+  <Suspense fallback={<div role="status" className="card m-4 p-8 text-center font-semibold text-slate-500">Loading {title}...</div>}>
+    <PageHelmet title={title} />{children}
+  </Suspense>
+)
 
 const Placeholder = ({ title, moduleName, description, checklist }) => (
   <TitledPage title={title}>
@@ -43,6 +50,7 @@ const Placeholder = ({ title, moduleName, description, checklist }) => (
 function App() {
   return (
     <>
+      <AdaptiveTables />
       <FormFieldValidation />
       <Routes>
         <Route path="/login" element={<TitledPage title="Admin Login"><Login /></TitledPage>} />
@@ -77,6 +85,7 @@ function App() {
 
             <Route path="reports/analytics" element={<TitledPage title="Reports"><ProtectedModule moduleName="reports"><AdminReports /></ProtectedModule></TitledPage>} />
             <Route path="reports/audit-logs" element={<TitledPage title="Audit Logs"><ProtectedModule moduleName="reports"><AdminAuditLogs /></ProtectedModule></TitledPage>} />
+            <Route path="reports/email-monitoring" element={<TitledPage title="Email Monitoring"><ProtectedModule moduleName="reports"><AdminEmailMonitoring /></ProtectedModule></TitledPage>} />
 
             <Route path="settings/general" element={<ProtectedModule moduleName="settings"><Placeholder title="General Settings" moduleName="Settings" description="Manage global application defaults and operational configuration." checklist={["Application labels", "Default statuses", "File rules", "Notification rules"]} /></ProtectedModule>} />
             <Route path="settings/security" element={<TitledPage title="Security Settings"><ProtectedModule moduleName="settings" allowedRoles={["super_admin"]}><AdminSecuritySettings /></ProtectedModule></TitledPage>} />

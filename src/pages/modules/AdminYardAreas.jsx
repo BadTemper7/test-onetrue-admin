@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { TableToolbar, TableSearchField, TableStatusTabs } from "../../components/table/TableToolbar";
+import { useEffect, useMemo, useState } from "react"
 import {
   Edit3,
   Layers3,
@@ -6,18 +7,15 @@ import {
   Plus,
   RefreshCw,
   Ruler,
-  Search,
-  SlidersHorizontal,
   Warehouse,
-} from "lucide-react"
+ } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
 import { api, getApiError } from "../../lib/api"
-import Pagination from "../../components/ui/Pagination"
-import TableCrudActions from "../../components/ui/TableCrudActions"
+import Pagination from "../../components/table/Pagination"
+import TableCrudActions from "../../components/table/TableCrudActions"
 import { usePagination } from "../../hooks/usePagination"
-import { useClickOutside } from "../../hooks/useClickOutside"
-import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import TableLoadingRow from "../../components/table/TableLoadingRow"
 
 const emptyAreaForm = {
   name: "",
@@ -89,14 +87,11 @@ const AdminYardAreas = () => {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [searchTerm, setSearchTerm] = useState("")
-  const [showFilters, setShowFilters] = useState(false)
-  const filterRef = useRef(null)
-  const [selectedStatuses, setSelectedStatuses] = useState(areaStatuses)
+  const [selectedStatus, setSelectedStatus] = useState("all")
   const [showAreaModal, setShowAreaModal] = useState(false)
   const [selectedArea, setSelectedArea] = useState(null)
 
 
-  useClickOutside(filterRef, () => setShowFilters(false), showFilters);
   const autoCapacity = useMemo(
     () => calculateAreaCapacity(areaForm),
     [areaForm.lineCount, areaForm.rowCount, areaForm.tierCount, areaForm.containerSize],
@@ -112,24 +107,27 @@ const AdminYardAreas = () => {
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(keyword))
 
-      return matchesSearch && selectedStatuses.includes(area.status)
+      return matchesSearch && (selectedStatus === "all" || selectedStatus === area.status)
     })
-  }, [areas, searchTerm, selectedStatuses])
+  }, [areas, searchTerm, selectedStatus])
 
   const areaPagination = usePagination(
     filteredAreas,
     10,
-    `${searchTerm}-${selectedStatuses.join("|")}`,
+    `${searchTerm}-${selectedStatus}`,
   )
 
   const loadAll = async () => {
     try {
       setLoading(true)
       setError("")
-      const { data } = await api.get("/admin/yard/module-data")
-      setAreas(data.areas || [])
+      const [areasResponse, summaryResponse] = await Promise.all([
+        api.get("/admin/yard/areas"),
+        api.get("/admin/yard/summary"),
+      ])
+      setAreas(areasResponse.data.areas || [])
       setSummary(
-        data.summary || {
+        summaryResponse.data.summary || {
           areaCount: 0,
           totalAreaCapacityTeu: 0,
           totalAreaCapacityFeu: 0,
@@ -259,13 +257,6 @@ const AdminYardAreas = () => {
     }
   }
 
-  const toggleStatus = (status) => {
-    setSelectedStatuses((current) =>
-      current.includes(status)
-        ? current.filter((item) => item !== status)
-        : [...current, status],
-    )
-  }
 
   const stats = [
     { label: "Total Areas", value: summary.areaCount || 0, icon: MapPinned, tone: "slate" },
@@ -276,8 +267,8 @@ const AdminYardAreas = () => {
 
   return (
     <div className="space-y-6">
-      <div className="card p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="card p-5 otli-module-frame">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between otli-module-hero">
           <div>
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">Yard Area Module</div>
             <h2 className="mt-1 text-2xl font-black text-slate-950">Yard Area Setup</h2>
@@ -296,7 +287,7 @@ const AdminYardAreas = () => {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="otli-kpi-grid mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4 otli-module-kpis otli-module-kpis--icons-leading">
           {stats.map((stat) => (
             <StatCard key={stat.label} {...stat} />
           ))}
@@ -317,58 +308,22 @@ const AdminYardAreas = () => {
             </p>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative">
-              <input
-                type="text"
-                className="input w-full !rounded-2xl !py-3 !pl-10 !pr-4 text-sm sm:w-[320px]"
-                placeholder="Search area, code, status..."
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-              />
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={19} />
-            </div>
+          <TableToolbar withTabs>
+            <TableSearchField
+ type="text"
+ placeholder="Search area, code, status..."
+ value={searchTerm}
+ onChange={(event) => setSearchTerm(event.target.value)}
+ ariaLabel="Search records"
+ />
 
-            <div className="relative" ref={filterRef}>
-              <button
-                type="button"
-                onClick={() => setShowFilters((current) => !current)}
-                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 sm:w-auto"
-              >
-                <SlidersHorizontal size={18} /> Filter
-                <span className="rounded-full bg-slate-950 px-2 py-0.5 text-xs text-white">{selectedStatuses.length}</span>
-              </button>
-
-              {showFilters && (
-                <div className="absolute right-0 z-30 mt-2 w-64 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
-                  <div className="mb-3 flex items-center justify-between">
-                    <div className="text-xs font-black uppercase tracking-wide text-slate-500">Status Filter</div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedStatuses(areaStatuses)}
-                      className="text-xs font-black text-emerald-700"
-                    >
-                      Reset
-                    </button>
-                  </div>
-
-                  <div className="space-y-2">
-                    {areaStatuses.map((status) => (
-                      <label key={status} className="flex cursor-pointer items-center gap-3 rounded-xl p-2 hover:bg-slate-50">
-                        <input
-                          type="checkbox"
-                          checked={selectedStatuses.includes(status)}
-                          onChange={() => toggleStatus(status)}
-                          className="h-4 w-4 accent-slate-950"
-                        />
-                        <span className="text-sm font-bold capitalize text-slate-700">{status}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+            <TableStatusTabs
+    label="Yard area status"
+    value={selectedStatus}
+    onChange={setSelectedStatus}
+    options={[{ value: "all", label: "All" }, ...areaStatuses.map((status) => ({ value: status, label: status.charAt(0).toUpperCase() + status.slice(1) }))]}
+  />
+          </TableToolbar>
         </div>
 
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">
@@ -376,7 +331,7 @@ const AdminYardAreas = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1020px] text-left text-sm">
+          <table className="otli-data-table w-full min-w-[1020px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Area</th>

@@ -6,7 +6,7 @@ const variantClasses = {
   neutral:
     "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900",
   dark:
-    "border-slate-900 bg-slate-950 text-white hover:border-slate-800 hover:bg-slate-800",
+    "border-slate-200 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50 hover:text-slate-950",
   info:
     "border-blue-100 bg-blue-50 text-blue-700 hover:border-blue-200 hover:bg-blue-100",
   success:
@@ -19,7 +19,7 @@ const variantClasses = {
 
 const sizeClasses = {
   sm: "h-9 w-9 rounded-lg",
-  md: "h-10 w-10 rounded-xl",
+  md: "h-11 w-11 rounded-xl",
 }
 
 const VIEWPORT_PADDING = 8
@@ -27,6 +27,7 @@ const TOOLTIP_GAP = 8
 
 const TableActionButton = ({
   label,
+  menuLabel, // Displayed only when this button is a secondary menu action.
   children,
   variant = "neutral",
   size = "md",
@@ -115,6 +116,7 @@ const TableActionButton = ({
           ref={buttonRef}
           type={type}
           aria-label={label}
+          data-menu-label={menuLabel || undefined}
           aria-describedby={tooltipAnchor ? tooltipId : undefined}
           disabled={isDisabled}
           onFocus={showTooltip}

@@ -1,17 +1,20 @@
+import { TableToolbar, TableSearchField, TableFilterButton } from "../../components/table/TableToolbar";
+import OperationalRecordCard, { RecordCardField } from "../../components/table/OperationalRecordCard"
+import FilterDropdownPortal from "../../components/table/FilterDropdownPortal"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Database, LogOut, MapPin, PackageCheck, Plus, RefreshCw, Search, SlidersHorizontal, Upload, Warehouse } from "lucide-react"
+import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Database, LogOut, MapPin, PackageCheck, Plus, RefreshCw, Download, Upload, Warehouse  } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
 import { api, getApiError, resolveFileUrl } from "../../lib/api"
-import Pagination from "../../components/ui/Pagination"
-import TableCrudActions from "../../components/ui/TableCrudActions"
-import TableActionButton from "../../components/ui/TableActionButton"
-import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import { downloadFilteredCsv } from "../../lib/filteredCsv"
+import Pagination from "../../components/table/Pagination"
+import TableCrudActions from "../../components/table/TableCrudActions"
+import TableActionButton from "../../components/table/TableActionButton"
+import TableLoadingRow from "../../components/table/TableLoadingRow"
 import WorkflowDecisionPanel from "../../components/ui/WorkflowDecisionPanel"
 import ContainerClassificationBadges from "../../components/ui/ContainerClassificationBadges"
 import ContainerClassificationFilters from "../../components/ui/ContainerClassificationFilters"
 import AvailableSlotPicker from "../../components/ui/AvailableSlotPicker"
-import { useClickOutside } from "../../hooks/useClickOutside"
 import { useAuthStore } from "../../stores/authStore"
 import { hasModulePermission } from "../../lib/permissions"
 
@@ -801,6 +804,7 @@ const AdminInventory = () => {
   const filterRef = useRef(null)
   const [loading, setLoading] = useState(true)
   const [tableLoading, setTableLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [paginationMeta, setPaginationMeta] = useState({ total: 0, totalPages: 1 })
@@ -846,7 +850,6 @@ const AdminInventory = () => {
   }, [containers])
 
 
-  useClickOutside(filterRef, () => setShowFilters(false), showFilters);
   const filteredContainers = bookingContainers
 
 
@@ -986,6 +989,27 @@ const AdminInventory = () => {
     return requestPromise
   }
 
+  const exportAllFiltered = async () => {
+    if (exporting) return
+    setExporting(true)
+    setAlert({ type: "", message: "" })
+    try {
+      const params = { source: "booking" }
+      if (selectedAreaId) params.areaId = selectedAreaId
+      if (selectedStatus !== "all") params.status = selectedStatus
+      if (search.trim()) params.search = search.trim()
+      if (selectedClientId !== "all") params.clientId = selectedClientId
+      if (selectedLoadStatus !== "all") params.loadStatus = selectedLoadStatus
+      if (selectedRateType !== "all") params.rateType = selectedRateType
+      if (selectedRecordSource !== "all") params.recordSource = selectedRecordSource
+      await downloadFilteredCsv("/admin/inventory/export", params, "inventory-filtered")
+    } catch (error) {
+      setAlert({ type: "error", message: getApiError(error) })
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const loadClientOptions = async () => {
     const { data } = await api.get("/admin/inventory/clients")
     setClientOptions(data.clients || [])
@@ -995,7 +1019,15 @@ const AdminInventory = () => {
     try {
       setLoading(true)
       setAlert({ type: "", message: "" })
-      await loadContainers({ includeStats: true, includeMeta: true })
+      await loadContainers({ includeStats: false, includeMeta: false })
+      // Keep the inventory table responsive even when summary, clients, or
+      // yard-area metadata take longer. Each optional read updates independently.
+      void Promise.allSettled([loadAreas(), loadSummary(), loadClientOptions(), loadInventoryStats()])
+        .then((results) => {
+          if (results.some((item) => item.status === "rejected")) {
+            setAlert({ type: "error", message: "Some inventory details are unavailable. Refresh to retry." })
+          }
+        })
     } catch (error) {
       if (error?.code !== "ERR_CANCELED" && error?.name !== "CanceledError") {
         setAlert({ type: "error", message: getApiError(error) })
@@ -1011,7 +1043,10 @@ const AdminInventory = () => {
       realtimeRefreshTimerRef.current = null
       realtimeRefreshFlagsRef.current = { inventory: false, yard: false }
     }
-    return loadContainers({ includeStats: true, includeMeta: refreshYard })
+    const table = loadContainers({ includeStats: false, includeMeta: false })
+    void loadInventoryStats({ refresh: true })
+    if (refreshYard) void Promise.allSettled([loadAreas(), loadSummary(), loadClientOptions()])
+    return table
   }
 
   useEffect(() => {
@@ -1347,10 +1382,63 @@ const AdminInventory = () => {
     }
   }
 
+  const renderInventoryActions = (container) => {
+    const canRelocate = ["approved_area_assigned", "gate_in_approved", "stored_in_assigned_area"].includes(container.bookingStatus)
+                    const canStartGateOut = container.bookingStatus === "stored_in_assigned_area"
+                    const canCompleteGateOut = container.bookingStatus === "gate_out_approved"
+                    const gateOutPending = ["gate_out_requested", "gate_out_reversal_requested"].includes(container.bookingStatus)
+                    const showGateOutAction = canStartGateOut || canCompleteGateOut || gateOutPending
+                    const gateOutLabel = canStartGateOut
+                      ? `Start Gate Out for ${container.containerNumber}`
+                      : canCompleteGateOut
+                        ? `Complete Gate Out and release ${container.containerNumber}`
+                        : container.bookingStatus === "gate_out_reversal_requested"
+                          ? `Gate-Out reversal for ${container.containerNumber} is pending review`
+                          : `Gate-Out for ${container.containerNumber} is pending payment or approval`
+    return (
+<TableCrudActions
+                        recordLabel={container.containerNumber}
+                        onView={() => setSelectedContainer(container)}
+                        onEdit={() => openLocationModal(container)}
+                        onDelete={() => deleteContainerRecord(container)}
+                        editDisabled={!canRelocate}
+                        editLabel={canRelocate ? `Edit location for ${container.containerNumber}` : `Location editing is unavailable for ${container.containerNumber} in its current status`}
+                        deleteDisabled={!canDeleteBooking}
+                        deleteLabel={canDeleteBooking ? `Delete ${container.containerNumber}` : "You do not have permission to delete container bookings"}
+                        deleting={deletingId === container.id}
+                      >
+                        <TableActionButton
+                          label={container.bookingStatus === "gate_in_approved"
+                            ? `Mark ${container.containerNumber} as stored`
+                            : `${container.containerNumber} is already stored or no longer eligible`}
+                          menuLabel="Mark stored"
+                          variant="success"
+                          disabled={container.bookingStatus !== "gate_in_approved"}
+                          loading={storingId === container.id}
+                          onClick={() => handleMarkStored(container)}
+                        >
+                          <PackageCheck size={17} aria-hidden="true" />
+                        </TableActionButton>
+                        {showGateOutAction && (
+                          <TableActionButton
+                            label={!canManageInventoryGateOut ? "You do not have permission to process Gate Out from Inventory" : gateOutLabel}
+                            menuLabel="Gate out"
+                            variant={canCompleteGateOut ? "success" : "warning"}
+                            disabled={!canManageInventoryGateOut || gateOutPending}
+                            loading={gateOutSaving && gateOutContainer?.id === container.id}
+                            onClick={() => openInventoryGateOut(container)}
+                          >
+                            <LogOut size={17} aria-hidden="true" />
+                          </TableActionButton>
+                        )}
+                      </TableCrudActions>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      <div className="card p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="card p-5 otli-module-frame">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between otli-module-hero">
           <div>
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">Inventory Module</div>
             <h1 className="mt-1 text-2xl font-black text-slate-950">Gate-In Container Inventory</h1>
@@ -1364,13 +1452,16 @@ const AdminInventory = () => {
                 <Plus size={16} /> Add Existing Container
               </button>
             )}
+            <button type="button" onClick={exportAllFiltered} className="btn-secondary shrink-0" disabled={exporting || loading || tableLoading} title="Export all matching inventory containers, across every page">
+              <Download size={16} /> {exporting ? "Exporting..." : "Export All Filtered"}
+            </button>
             <button type="button" onClick={loadAll} className="btn-secondary shrink-0" disabled={loading || tableLoading}>
               <RefreshCw size={16} className={loading || tableLoading ? "animate-spin" : ""} /> Refresh
             </button>
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="otli-kpi-grid mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5 otli-module-kpis otli-module-kpis--icons-leading">
           <StatCard label="Area Capacity" value={`${summary?.totalAreaCapacityTeu || 0} TEU`} icon={Warehouse} />
           <StatCard label="Total Containers" value={inventoryStats.totalContainers} icon={MapPin} />
           <StatCard label="Waiting Storage" value={inventoryStats.waitingStorage} icon={PackageCheck} />
@@ -1392,31 +1483,19 @@ const AdminInventory = () => {
             </p>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative">
-              <input
-                className="input w-full !rounded-2xl !py-3 !pl-10 !pr-4 text-sm sm:w-[340px]"
+          <TableToolbar>
+            <TableSearchField
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search container, booking, client..."
+                ariaLabel="Search records"
               />
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={19} />
-            </div>
 
-            <div className="relative" ref={filterRef}>
-              <button
-                type="button"
-                onClick={() => setShowFilters((current) => !current)}
-                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 sm:w-auto"
-              >
-                <SlidersHorizontal size={18} /> Filter
-                <span className="rounded-full bg-slate-950 px-2 py-0.5 text-xs text-white">
-                  {(selectedAreaId ? 1 : 0) + (selectedClientId !== "all" ? 1 : 0) + (selectedStatus !== "all" ? 1 : 0) + (selectedLoadStatus !== "all" ? 1 : 0) + (selectedRateType !== "all" ? 1 : 0) + (selectedRecordSource !== "all" ? 1 : 0)}
-                </span>
-              </button>
+            <div className="relative otli-filter-control shrink-0" ref={filterRef}>
+              <TableFilterButton open={showFilters} onClick={() => setShowFilters((current) => !current)} label="Filter" />
 
               {showFilters && (
-                <div className="absolute right-0 z-30 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+                <FilterDropdownPortal open={showFilters} anchorRef={filterRef} onClose={() => setShowFilters(false)} className="w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
                   <div className="mb-4 flex items-center justify-between">
                     <div className="text-xs font-black uppercase tracking-wide text-slate-500">Inventory Filters</div>
                     <button
@@ -1469,18 +1548,44 @@ const AdminInventory = () => {
                       onRateTypeChange={setSelectedRateType}
                     />
                   </div>
-                </div>
+                </FilterDropdownPortal>
               )}
             </div>
-          </div>
+          </TableToolbar>
         </div>
 
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">
-          Showing {filteredContainers.length} matching containers • {inventoryStats.totalContainers} total in inventory{inventoryTruncated ? " • result limit reached; refine filters to narrow the list" : ""}
+          Showing {filteredContainers.length} of {paginationMeta.total} matching containers • {inventoryStats.totalContainers} total in inventory{inventoryTruncated ? " • result limit reached; refine filters to narrow the list" : ""}
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1180px] text-left text-sm">
+        <div className="space-y-3 p-3 md:hidden" aria-label="Inventory container records">
+          {containerPagination.paginatedItems.map((container) => (
+            <OperationalRecordCard
+              key={container.id}
+              eyebrow={container.bookingReference}
+              title={container.containerNumber}
+              subtitle={container.clientName || "Client"}
+              onOpen={() => setSelectedContainer(container)}
+              actions={renderInventoryActions(container)}
+              status={
+                <>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(container.bookingStatus)}`}>{statusLabel[container.bookingStatus] || container.bookingStatus}</span>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${billingClass(container.billingStatus)}`}>{billingLabel[container.billingStatus] || container.billingStatus}</span>
+                  {container.isOverstaying && <span className="rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700">Overstaying</span>}
+                </>
+              }
+            >
+              <RecordCardField label="Yard location">{[container.areaName || "Not assigned", container.blockCode || container.blockName, container.slotNumber ? `Slot ${container.slotNumber}` : "No slot"].filter(Boolean).join(" · ")}</RecordCardField>
+              <RecordCardField label="Size / type">{container.containerSize}ft · {String(container.containerType || "").replaceAll("_", " ")}</RecordCardField>
+              <RecordCardField label="Classification"><ContainerClassificationBadges loadStatus={container.containerLoadStatus || container.containerStatus} rateType={container.rateType} compact /></RecordCardField>
+              <RecordCardField label="Gate-In date">{formatDate(container.inventoryEnteredAt || container.gateInApprovedAt || container.storedAt)}</RecordCardField>
+              <RecordCardField label="Stored at">{container.storedAt ? formatDate(container.storedAt) : "Not yet stored"}</RecordCardField>
+            </OperationalRecordCard>
+          ))}
+          {!tableLoading && containerPagination.paginatedItems.length === 0 && <p className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">No containers found for the selected filters.</p>}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
+          <table data-mobile-view="scroll" className="otli-data-table w-full min-w-[1180px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-5 py-3">Booking / Container</th>
@@ -1500,18 +1605,6 @@ const AdminInventory = () => {
                 </tr>
               )}
               {containerPagination.paginatedItems.map((container) => {
-                const canRelocate = ["approved_area_assigned", "gate_in_approved", "stored_in_assigned_area"].includes(container.bookingStatus)
-                const canStartGateOut = container.bookingStatus === "stored_in_assigned_area"
-                const canCompleteGateOut = container.bookingStatus === "gate_out_approved"
-                const gateOutPending = ["gate_out_requested", "gate_out_reversal_requested"].includes(container.bookingStatus)
-                const showGateOutAction = canStartGateOut || canCompleteGateOut || gateOutPending
-                const gateOutLabel = canStartGateOut
-                  ? `Start Gate Out for ${container.containerNumber}`
-                  : canCompleteGateOut
-                    ? `Complete Gate Out and release ${container.containerNumber}`
-                    : container.bookingStatus === "gate_out_reversal_requested"
-                      ? `Gate-Out reversal for ${container.containerNumber} is pending review`
-                      : `Gate-Out for ${container.containerNumber} is pending payment or approval`
 
                 return (
                   <tr key={container.id} className="align-top hover:bg-slate-50/70">
@@ -1536,40 +1629,7 @@ const AdminInventory = () => {
                     </td>
                     <td className="px-5 py-4"><span className={`rounded-full px-3 py-1 text-xs font-black ${billingClass(container.billingStatus)}`}>{billingLabel[container.billingStatus] || container.billingStatus}</span></td>
                     <td className="px-5 py-4">
-                      <TableCrudActions
-                        recordLabel={container.containerNumber}
-                        onView={() => setSelectedContainer(container)}
-                        onEdit={() => openLocationModal(container)}
-                        onDelete={() => deleteContainerRecord(container)}
-                        editDisabled={!canRelocate}
-                        editLabel={canRelocate ? `Edit location for ${container.containerNumber}` : `Location editing is unavailable for ${container.containerNumber} in its current status`}
-                        deleteDisabled={!canDeleteBooking}
-                        deleteLabel={canDeleteBooking ? `Delete ${container.containerNumber}` : "You do not have permission to delete container bookings"}
-                        deleting={deletingId === container.id}
-                      >
-                        <TableActionButton
-                          label={container.bookingStatus === "gate_in_approved"
-                            ? `Mark ${container.containerNumber} as stored`
-                            : `${container.containerNumber} is already stored or no longer eligible`}
-                          variant="success"
-                          disabled={container.bookingStatus !== "gate_in_approved"}
-                          loading={storingId === container.id}
-                          onClick={() => handleMarkStored(container)}
-                        >
-                          <PackageCheck size={17} aria-hidden="true" />
-                        </TableActionButton>
-                        {showGateOutAction && (
-                          <TableActionButton
-                            label={!canManageInventoryGateOut ? "You do not have permission to process Gate Out from Inventory" : gateOutLabel}
-                            variant={canCompleteGateOut ? "success" : "warning"}
-                            disabled={!canManageInventoryGateOut || gateOutPending}
-                            loading={gateOutSaving && gateOutContainer?.id === container.id}
-                            onClick={() => openInventoryGateOut(container)}
-                          >
-                            <LogOut size={17} aria-hidden="true" />
-                          </TableActionButton>
-                        )}
-                      </TableCrudActions>
+                      {renderInventoryActions(container)}
                     </td>
                   </tr>
                 )

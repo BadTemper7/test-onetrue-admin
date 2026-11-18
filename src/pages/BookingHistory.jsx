@@ -5,11 +5,9 @@ import {
   FiCreditCard,
   FiDollarSign,
   FiEye,
-  FiFilter,
   FiPackage,
   FiRefreshCw,
   FiRotateCcw,
-  FiSearch,
   FiTruck,
   FiX,
 } from "react-icons/fi";
@@ -18,11 +16,12 @@ import InputDate from "../components/ui/InputDate";
 import InputFile from "../components/ui/InputFile";
 import InputText from "../components/ui/InputText";
 import InputTime from "../components/ui/InputTime";
-import Pagination from "../components/ui/Pagination";
+import Pagination from "../components/table/Pagination";
 import { api, getApiError, resolveFileUrl } from "../lib/api";
 import { useBookingStore } from "../stores/bookingStore";
 import { usePagination } from "../hooks/usePagination";
-import TableLoadingRow from "../components/ui/TableLoadingRow"
+import TableLoadingRow from "../components/table/TableLoadingRow"
+import { TableSearchField, TableToolbar, TableToolbarSelect } from "../components/table/TableToolbar"
 
 const statusConfig = {
   pending_admin_approval: [
@@ -595,37 +594,29 @@ const BookingHistory = () => {
       )}
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <div className="relative flex-1">
-            <FiSearch className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Search booking, container, driver, or shipping line"
-              className="w-full rounded-lg border border-slate-300 py-2.5 pl-9 pr-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <FiFilter className="text-slate-400" />
-            <select
-              value={filterStatus}
-              onChange={(event) => setFilterStatus(event.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-emerald-500 focus:outline-none"
-            >
-              <option value="all">All statuses</option>
-              {Object.entries(statusConfig).map(([value, config]) => (
-                <option key={value} value={value}>
-                  {config[0]}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+        <TableToolbar>
+          <TableSearchField
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Search booking, container, driver, or shipping line"
+            ariaLabel="Search booking history"
+          />
+          <TableToolbarSelect
+            value={filterStatus}
+            onChange={(event) => setFilterStatus(event.target.value)}
+            label="Filter booking history by status"
+          >
+            <option value="all">All statuses</option>
+            {Object.entries(statusConfig).map(([value, config]) => (
+              <option key={value} value={value}>{config[0]}</option>
+            ))}
+          </TableToolbarSelect>
+        </TableToolbar>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1050px] text-left text-sm">
+          <table className="otli-data-table w-full min-w-[1050px] text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Booking</th>

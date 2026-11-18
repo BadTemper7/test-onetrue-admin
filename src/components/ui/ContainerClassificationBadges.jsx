@@ -13,7 +13,7 @@ export const normalizeContainerRateType = (value) =>
 const loadConfig = {
   empty: {
     label: "Empty",
-    className: "bg-slate-100 text-slate-700 ring-slate-200",
+    className: "bg-slate-100 text-slate-700 ring-slate-300",
   },
   laden: {
     label: "Laden",

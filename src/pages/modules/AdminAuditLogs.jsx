@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react"
-import { RefreshCw, Search, ShieldCheck } from "lucide-react"
+import FilterDropdownPortal from "../../components/table/FilterDropdownPortal";
+import { TableToolbar, TableSearchField, TableFilterButton } from "../../components/table/TableToolbar";
+import { useEffect, useRef, useState } from "react"
+import { RefreshCw, ShieldCheck  } from "lucide-react"
 import Alert from "../../components/Alert"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
-import TableCrudActions from "../../components/ui/TableCrudActions"
+import TableCrudActions from "../../components/table/TableCrudActions"
 import { api, getApiError } from "../../lib/api"
-import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import TableLoadingRow from "../../components/table/TableLoadingRow"
 
 const actionClass = {
   add: "bg-emerald-50 text-emerald-700",
@@ -14,6 +16,8 @@ const actionClass = {
 
 const AdminAuditLogs = () => {
   const [logs, setLogs] = useState([])
+  const [showFilters, setShowFilters] = useState(false)
+  const filterRef = useRef(null)
   const [modules, setModules] = useState([])
   const [filters, setFilters] = useState({
     search: "",
@@ -49,7 +53,7 @@ const AdminAuditLogs = () => {
 
   return (
     <div className="space-y-5">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="otli-module-hero otli-module-standalone rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
             <ShieldCheck />
@@ -66,70 +70,41 @@ const AdminAuditLogs = () => {
       {error && <Alert type="error" message={error} />}
 
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid gap-3 border-b border-slate-200 p-4 md:grid-cols-[1fr_220px_180px_auto]">
-          <label className="relative">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-              size={16}
-            />
-            <input
-              className="input pl-10"
-              value={filters.search}
-              onChange={(event) =>
-                setFilters((current) => ({
-                  ...current,
-                  search: event.target.value,
-                }))
-              }
-              onKeyDown={(event) => event.key === "Enter" && loadLogs()}
-              placeholder="Search user, record, or description"
-            />
-          </label>
-
-          <select
-            className="input"
-            value={filters.module}
-            onChange={(event) => {
-              setPage(1)
-              setFilters((current) => ({
-                ...current,
-                module: event.target.value,
-              }))
-            }}
-          >
-            <option value="all">All modules</option>
-            {modules.map((module) => (
-              <option key={module} value={module}>
-                {module}
-              </option>
-            ))}
-          </select>
-
-          <select
-            className="input"
-            value={filters.action}
-            onChange={(event) => {
-              setPage(1)
-              setFilters((current) => ({
-                ...current,
-                action: event.target.value,
-              }))
-            }}
-          >
-            <option value="all">All actions</option>
-            <option value="add">Add</option>
-            <option value="edit">Edit</option>
-            <option value="delete">Delete</option>
-          </select>
-
-          <button type="button" onClick={loadLogs} className="btn-secondary">
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-            Search
-          </button>
+        <div className="border-b border-slate-200 p-4">
+          <TableToolbar>
+            <TableSearchField ariaLabel="Search audit events" placeholder="Search user, record, description..." value={filters.search}
+              onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+              onKeyDown={(event) => event.key === "Enter" && loadLogs()} />
+            <div className="relative shrink-0" ref={filterRef}>
+              <TableFilterButton open={showFilters} onClick={() => setShowFilters((current) => !current)} count={Number(filters.module !== "all") + Number(filters.action !== "all")} />
+              <FilterDropdownPortal open={showFilters} anchorRef={filterRef} onClose={() => setShowFilters(false)} className="w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+                <h4 className="mb-3 text-sm font-semibold text-slate-900">Filter audit events</h4>
+                <label className="block text-xs font-semibold text-slate-600">Module
+                  <select className="input mt-1 w-full" value={filters.module} onChange={(event) => {
+                    setPage(1); setFilters((current) => ({ ...current, module: event.target.value }));
+                  }}>
+                    <option value="all">All modules</option>{modules.map((module) => <option key={module} value={module}>{module}</option>)}
+                  </select>
+                </label>
+                <label className="mt-3 block text-xs font-semibold text-slate-600">Action
+                  <select className="input mt-1 w-full" value={filters.action} onChange={(event) => {
+                    setPage(1); setFilters((current) => ({ ...current, action: event.target.value }));
+                  }}>
+                    <option value="all">All actions</option><option value="add">Add</option><option value="edit">Edit</option><option value="delete">Delete</option>
+                  </select>
+                </label>
+                <button type="button" className="mt-3 text-xs font-semibold text-emerald-700" onClick={() => { setPage(1); setFilters((current) => ({ ...current, module: "all", action: "all" })); }}>Reset filters</button>
+              </FilterDropdownPortal>
+            </div>
+            <button type="button" onClick={loadLogs} className="otli-table-toolbar-filter" aria-label="Apply search" disabled={loading}>
+              <RefreshCw size={17} className={loading ? "animate-spin" : ""} />
+              <span className="hidden sm:inline">Search</span>
+            </button>
+          </TableToolbar>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1050px] text-left text-sm">
+          <table className="otli-data-table w-full min-w-[1050px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Date / Time</th>

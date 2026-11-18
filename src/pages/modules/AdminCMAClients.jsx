@@ -1,6 +1,8 @@
+import { TableToolbar, TableSearchField } from "../../components/table/TableToolbar";
 import { useEffect, useMemo, useState } from "react"
-import { Building2, Pencil, Plus, RefreshCw, Search, Truck, Users, X } from "lucide-react"
+import { Building2, Plus, RefreshCw, Search, Truck, Users, X  } from "lucide-react"
 import Alert from "../../components/Alert"
+import TableCrudActions from "../../components/table/TableCrudActions"
 import { api, getApiError } from "../../lib/api"
 
 const emptyForm = {
@@ -140,8 +142,8 @@ const AdminCMAClients = () => {
 
   return (
     <div className="space-y-6">
-      <section className="card p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <section className="card p-5 otli-module-frame">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between otli-module-hero">
           <div>
             <div className="text-sm font-black uppercase tracking-wide text-emerald-700">CMA Special Client</div>
             <h2 className="mt-1 text-2xl font-black text-slate-950">CMA Client Registration</h2>
@@ -152,7 +154,7 @@ const AdminCMAClients = () => {
             <button type="button" className="btn-primary" onClick={openAdd}><Plus size={17} /> Register CMA Client</button>
           </div>
         </div>
-        <div className="mt-5 grid gap-4 md:grid-cols-3">
+        <div className="otli-kpi-grid mt-5 grid gap-4 md:grid-cols-3 otli-module-kpis">
           <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-black uppercase tracking-wide text-emerald-700">Active CMA Clients</p><p className="mt-2 text-3xl font-black text-emerald-800">{activeCount}</p></div><Building2 className="text-emerald-700" /></div></div>
           <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-black uppercase tracking-wide text-blue-700">Assigned Truckers</p><p className="mt-2 text-3xl font-black text-blue-800">{assignedTruckers}</p></div><Truck className="text-blue-700" /></div></div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-black uppercase tracking-wide text-slate-600">Shipping-Line Tags</p><p className="mt-2 text-3xl font-black text-slate-950">{shippingLineCount}</p></div><Users className="text-slate-700" /></div></div>
@@ -163,10 +165,10 @@ const AdminCMAClients = () => {
       <section className="card overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div><h3 className="text-lg font-black text-slate-950">Registered CMA Clients</h3><p className="text-sm text-slate-500">Automatic CMA tagging matches a booking by the assigned trucker or configured shipping line.</p></div>
-          <div className="relative" data-field-control><Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} /><input className="input w-full !rounded-xl !pl-10 sm:w-[320px]" placeholder="Search CMA client" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+          <TableToolbar className="sm:max-w-[340px]"><TableSearchField placeholder="Search CMA client..." ariaLabel="Search CMA clients" value={search} onChange={(event) => setSearch(event.target.value)} /></TableToolbar>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
+          <table className="otli-data-table min-w-full text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">CMA Client</th><th className="px-4 py-3">Shipping Lines</th><th className="px-4 py-3">Trucker Clients</th><th className="px-4 py-3">Contact</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Action</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? <tr><td colSpan="6" className="px-4 py-12 text-center text-slate-500">Loading CMA clients...</td></tr> : filtered.length === 0 ? <tr><td colSpan="6" className="px-4 py-12 text-center text-slate-500">No CMA clients found.</td></tr> : filtered.map((item) => (
@@ -176,7 +178,7 @@ const AdminCMAClients = () => {
                   <td className="px-4 py-4 font-bold text-slate-700">{item.truckerCount || 0}</td>
                   <td className="px-4 py-4"><div className="font-semibold text-slate-700">{item.contactPerson || "-"}</div><div className="text-xs text-slate-500">{item.email || item.phoneNumber || "-"}</div></td>
                   <td className="px-4 py-4"><span className={`rounded-full px-2.5 py-1 text-xs font-black ${item.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{item.status}</span></td>
-                  <td className="px-4 py-4"><div className="flex justify-end gap-2"><button type="button" className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" title="Edit" onClick={() => openEdit(item)}><Pencil size={15} /></button>{item.status === "active" && <button type="button" className="rounded-lg border border-red-100 p-2 text-red-600 hover:bg-red-50" title="Deactivate" onClick={() => deactivate(item)}><X size={15} /></button>}</div></td>
+                  <td className="px-4 py-4 text-right"><TableCrudActions recordLabel={item.name} onEdit={() => openEdit(item)} onDelete={item.status === "active" ? () => deactivate(item) : undefined} deleteLabel={`Deactivate ${item.name}`} /></td>
                 </tr>
               ))}
             </tbody>

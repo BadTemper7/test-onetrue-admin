@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { Pencil, Plus, RefreshCw, Search, Trash2, Users } from "lucide-react"
+import { Plus, RefreshCw, Users  } from "lucide-react"
 import Alert from "../../components/Alert"
+import TableCrudActions from "../../components/table/TableCrudActions"
 import ModalCloseButton from "../../components/ui/ModalCloseButton"
-import Pagination from "../../components/ui/Pagination"
-import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import Pagination from "../../components/table/Pagination"
+import TableLoadingRow from "../../components/table/TableLoadingRow"
+import { TableSearchField, TableToolbar } from "../../components/table/TableToolbar"
 import { api, getApiError } from "../../lib/api"
 
 const todayManila = () => {
@@ -153,7 +155,7 @@ export default function AdminSpecialRates({ generalRates = [] }) {
     <section className="card overflow-hidden">
       <div className="border-b border-slate-200 p-5">
         <Alert type={alert.type}>{alert.message}</Alert>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between otli-module-hero otli-module-hero--plain">
           <div>
             <p className="text-xs font-black uppercase tracking-wide text-violet-700">Client Pricing</p>
             <h3 className="mt-1 text-xl font-black text-slate-950">Special Rates</h3>
@@ -164,13 +166,17 @@ export default function AdminSpecialRates({ generalRates = [] }) {
             <button type="button" className="btn-primary" onClick={openCreate}><Plus size={17} /> Add Special Rate</button>
           </div>
         </div>
-        <div className="mt-5 relative max-w-xl">
-          <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input className="input pl-10" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search special rate, client, or transaction" />
-        </div>
+        <TableToolbar className="mt-5 max-w-xl">
+          <TableSearchField
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search special rate, client, or transaction"
+            ariaLabel="Search special rates"
+          />
+        </TableToolbar>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full text-left text-sm">
+        <table className="otli-data-table min-w-full text-left text-sm">
           <thead className="bg-slate-50 text-xs font-black uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-4">Special Rate</th><th className="px-5 py-4">Clients</th><th className="px-5 py-4">Transactions</th><th className="px-5 py-4">Effectivity</th><th className="px-5 py-4">Status</th><th className="px-5 py-4 text-right">Actions</th></tr></thead>
           <tbody className="divide-y divide-slate-100">
             {loading && <TableLoadingRow colSpan={6} rows={5} actionColumn label="Loading special rates" />}
@@ -181,7 +187,7 @@ export default function AdminSpecialRates({ generalRates = [] }) {
                 <td className="px-5 py-4"><p className="font-bold text-slate-700">{item.transactions.length} transaction{item.transactions.length === 1 ? "" : "s"}</p><p className="mt-1 max-w-sm text-xs text-slate-500">{item.transactions.slice(0, 2).map((row) => `${row.description}: PHP ${money(row.specialRateAmount)}`).join(" · ")}{item.transactions.length > 2 ? ` · +${item.transactions.length - 2} more` : ""}</p></td>
                 <td className="px-5 py-4 font-bold text-slate-700">{String(item.effectiveDate).slice(0, 10)}</td>
                 <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-xs font-black ${item.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{item.status}</span></td>
-                <td className="px-5 py-4"><div className="flex justify-end gap-2"><button type="button" onClick={() => openEdit(item)} className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:text-emerald-700" aria-label="Edit special rate"><Pencil size={16} /></button><button type="button" onClick={() => deactivate(item)} className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:text-red-600" aria-label="Deactivate special rate"><Trash2 size={16} /></button></div></td>
+                <td className="px-5 py-4 text-right"><TableCrudActions recordLabel={item.name} onEdit={() => openEdit(item)} onDelete={() => deactivate(item)} deleteLabel={`Deactivate ${item.name}`} /></td>
               </tr>
             ))}
             {!loading && !items.length && <tr><td colSpan="6" className="px-5 py-14 text-center font-semibold text-slate-500">No Special Rates found.</td></tr>}

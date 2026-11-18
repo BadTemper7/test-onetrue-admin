@@ -64,18 +64,19 @@ export const useSocket = ({ token, enabled = true }) => {
   useEffect(() => {
     if (!enabled || !token) return undefined
 
-    // WebSocket-only prevents service workers/Workbox and load balancers from
-    // caching or splitting the multi-request Socket.IO polling handshake.
+    // Managed Hostinger Node.js hosting may reject inbound WebSocket upgrades.
+    // Start with HTTP polling so account notifications still work; upgrade
+    // to WebSocket only when the reverse proxy supports it.
     const socket = io(SOCKET_URL, {
       path: "/socket.io",
       auth: { token },
-      transports: ["websocket"],
-      upgrade: false,
-      rememberUpgrade: true,
+      transports: ["polling", "websocket"],
+      upgrade: true,
+      rememberUpgrade: false,
       reconnection: true,
-      reconnectionAttempts: 10,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
+      reconnectionDelayMax: 15000,
       timeout: 15000,
     })
 

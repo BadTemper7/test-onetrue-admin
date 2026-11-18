@@ -12,7 +12,7 @@ import {
 import Alert from "../../components/Alert"
 import ModernDateInput from "../../components/ModernDateInput"
 import { api, getApiError } from "../../lib/api"
-import TableLoadingRow from "../../components/ui/TableLoadingRow"
+import TableLoadingRow from "../../components/table/TableLoadingRow"
 
 const statusLabels = {
   stored_in_assigned_area: "Stored in Assigned Area",
@@ -134,8 +134,8 @@ const AdminGateOutCalendar = () => {
 
   return (
     <div className="space-y-6">
-      <section className="card p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <section className="card p-5 otli-module-frame">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between otli-module-hero">
           <div>
             <div className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-emerald-700">
               <CalendarDays size={16} /> Gate-Out Calendar
@@ -150,7 +150,7 @@ const AdminGateOutCalendar = () => {
           </button>
         </div>
 
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="otli-kpi-grid mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4 otli-module-kpis otli-module-kpis--icons-leading">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
             <div className="flex items-center justify-between gap-3">
               <div><p className="text-xs font-black uppercase tracking-wide text-slate-500">Scheduled</p><p className="mt-2 text-3xl font-black text-slate-950">{usedSlots}</p></div>
@@ -229,7 +229,7 @@ const AdminGateOutCalendar = () => {
         </div>
 
         <div className="overflow-x-auto p-4">
-          <table className="w-full min-w-[920px] text-left text-sm">
+          <table className="otli-data-table w-full min-w-[920px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Time</th>

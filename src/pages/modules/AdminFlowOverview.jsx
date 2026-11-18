@@ -14,7 +14,7 @@ const StatusPill = ({ status }) => {
 const AdminFlowOverview = () => {
   return (
     <div className="space-y-6">
-      <div className="card p-5">
+      <div className="card p-5 otli-module-hero otli-module-standalone">
         <div className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-emerald-700"><Workflow size={15} /> OTLI Lifecycle CMS</div>
         <h1 className="mt-1 text-2xl font-black text-slate-950">Admin System Flow</h1>
         <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-500">
@@ -22,7 +22,7 @@ const AdminFlowOverview = () => {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="otli-kpi-grid grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         {statusGroups.map((group) => (
           <div key={group.title} className="card p-5">
             <h2 className="text-sm font-black uppercase tracking-wide text-slate-500">{group.title}</h2>

@@ -240,12 +240,9 @@ const Login = () => {
                 onChange={handleChange}
                 size="sm"
               />
-              <a
-                href="#"
-                className="text-sm text-yard-green hover:text-emerald-700 font-medium transition-colors"
-              >
-                Forgot password?
-              </a>
+              <span className="text-xs text-slate-500" title="Contact your administrator to reset your password">
+                Password help: contact your administrator
+              </span>
             </div>
 
             <Button

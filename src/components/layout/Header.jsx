@@ -6,7 +6,6 @@ import {
   FiUser,
   FiLogOut,
   FiSettings,
-  FiSearch,
   FiChevronDown,
   FiCheck,
   FiInbox,
@@ -142,21 +141,9 @@ const Header = ({ toggleSidebar, toggleMobileSidebar, connected = false, realtim
             >
               <FiMenu className="h-5 w-5 text-slate-600" />
             </button>
-
-            <div className="hidden items-center rounded-md border border-transparent bg-yard-fog px-3 py-2 transition-colors focus-within:border-yard-navy/30 focus-within:bg-white md:flex">
-              <FiSearch className="h-4 w-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search..."
-                className="ml-2 w-48 border-none bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400 lg:w-64"
-              />
-            </div>
           </div>
 
           <div className="flex items-center space-x-1.5 md:space-x-2">
-            <button className="rounded-md p-2 transition-colors hover:bg-yard-fog md:hidden" aria-label="Search">
-              <FiSearch className="h-5 w-5 text-slate-600" />
-            </button>
 
             <div className="relative" ref={notificationRef}>
               <button
