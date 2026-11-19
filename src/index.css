@@ -1275,3 +1275,63 @@ html {
 .otli-toolbar-with-export > div:has(> .otli-table-toolbar-filter) { order: 2; }
 .otli-toolbar-with-export > [data-export-control] { order: 3; }
 @media(max-width: 767px) { .otli-toolbar-with-export { flex-wrap: wrap; } .otli-toolbar-with-export > [data-export-control] { flex: 1 0 100%; justify-content: center; width: 100%; } }
+
+
+/* Consistent admin page gutters. The shell owns outer spacing so modules
+   don't need to repeat horizontal padding. The verification hero follows the
+   same 20px mobile inset as other navy module headers. */
+:root {
+  --otli-mobile-page-gutter: .75rem;
+  --otli-mobile-surface-inset: 1.25rem;
+  --otli-mobile-kpi-gutter: .5rem;
+}
+.otli-admin-main {
+  min-width: 0;
+  width: 100%;
+  padding: 1rem var(--otli-mobile-page-gutter);
+}
+@media (min-width: 640px) {
+  .otli-admin-main { padding-inline: 1rem; }
+}
+@media (min-width: 768px) {
+  .otli-admin-main { padding: 1.5rem; }
+}
+@media (max-width: 767px) {
+  .otli-module-hero { padding-inline: var(--otli-mobile-surface-inset); }
+  .otli-client-verification-page { min-width: 0; }
+  .otli-client-verification-hero {
+    padding: 1.4rem var(--otli-mobile-surface-inset) 4.25rem;
+    border-radius: 1.35rem;
+  }
+  .otli-client-verification-hero h1 {
+    font-size: clamp(1.45rem, 6.4vw, 1.65rem);
+    line-height: 1.16;
+    overflow-wrap: normal;
+  }
+  .otli-client-verification-hero p { line-height: 1.5; }
+  .otli-client-verification-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-inline: var(--otli-mobile-kpi-gutter);
+    gap: .5rem;
+  }
+  .otli-client-verification-stat {
+    min-height: 5.65rem;
+    min-width: 0;
+    padding: .65rem .3rem;
+    border-radius: .9rem;
+  }
+  .otli-client-verification-stat > span:last-child {
+    min-width: 0;
+    width: 100%;
+  }
+  .otli-client-verification-stat > span:last-child > span {
+    overflow-wrap: anywhere;
+  }
+}
+@media (max-width: 340px) {
+  .otli-client-verification-kpis { gap: .4rem; }
+  .otli-client-verification-stat { padding-inline: .18rem; }
+  .otli-client-verification-stat > span:last-child > span:first-child {
+    font-size: .65rem;
+  }
+}

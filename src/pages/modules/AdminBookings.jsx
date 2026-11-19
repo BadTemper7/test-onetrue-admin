@@ -1,5 +1,5 @@
 import { TableToolbar, TableSearchField, TableFilterButton } from "../../components/table/TableToolbar";
-import OperationalRecordCard, { RecordCardField } from "../../components/table/OperationalRecordCard"
+import BookingMobileCard, { BookingCardDetail } from "../../components/table/BookingMobileCard"
 import FilterDropdownPortal from "../../components/table/FilterDropdownPortal"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
@@ -718,42 +718,36 @@ const AdminBookings = () => {
         <div className="space-y-3 p-3 md:hidden" aria-label="Container tracking records">
           {!loading && bookings.length === 0 && <p className="p-6 text-center text-sm text-slate-500">No bookings found for the selected filters.</p>}
           {bookings.map((booking) => (
-            <OperationalRecordCard
+            <BookingMobileCard
               key={booking.id}
-              eyebrow={booking.bookingReference}
-              title={booking.containerNumber}
-              subtitle={booking.clientName || "Client"}
+              booking={booking}
+              statusLabel={statusLabels[booking.status] || booking.status}
+              billingLabel={billingLabels[booking.billingStatus] || booking.billingStatus}
               onOpen={() => viewBooking(booking)}
-              ariaLabel={`View details for ${booking.bookingReference}`}
-              actions={(<TableCrudActions
-                recordLabel={booking.bookingReference}
-                onView={() => viewBooking(booking)}
-                onEdit={() => editBooking(booking)}
-                onDelete={() => deleteBooking(booking)}
-                deleteDisabled={!canDeleteBooking}
-                deleteLabel={canDeleteBooking ? `Delete ${booking.bookingReference}` : "You do not have permission to delete bookings"}
-                deleting={deletingId === booking.id}
-              >
-                <TableActionButton label={`Open print options for ${booking.bookingReference}`} menuLabel="Print" variant="success" onClick={() => viewBooking(booking)}>
-                  <Printer size={17} aria-hidden="true" />
-                </TableActionButton>
-              </TableCrudActions>)}
-              status={
-                <>
-                  <span className={`inline-flex max-w-full rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(booking.status)}`}>{statusLabels[booking.status] || booking.status}</span>
-                  <span className={`inline-flex max-w-full rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(booking.billingStatus)}`}>{billingLabels[booking.billingStatus] || booking.billingStatus}</span>
-                  {booking.isOverstaying && <span className="rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700">Overstaying</span>}
-                </>
+              actions={
+                <TableCrudActions
+                  recordLabel={booking.bookingReference}
+                  onView={() => viewBooking(booking)}
+                  onEdit={() => editBooking(booking)}
+                  onDelete={() => deleteBooking(booking)}
+                  deleteDisabled={!canDeleteBooking}
+                  deleteLabel={canDeleteBooking ? `Delete ${booking.bookingReference}` : "You do not have permission to delete bookings"}
+                  deleting={deletingId === booking.id}
+                >
+                  <TableActionButton label={`Open print options for ${booking.bookingReference}`} menuLabel="Print" variant="success" onClick={() => viewBooking(booking)}>
+                    <Printer size={17} aria-hidden="true" />
+                  </TableActionButton>
+                </TableCrudActions>
               }
             >
-              <RecordCardField label="Client email">{booking.clientEmail || "Not provided"}</RecordCardField>
-              <RecordCardField label="Size / type">{booking.containerSize}ft · {String(booking.containerType || "").replaceAll("_", " ")}</RecordCardField>
-              <RecordCardField label="Classification">{String(booking.containerLoadStatus || "Unknown").replaceAll("_", " ")} · {String(booking.rateType || "Unknown").replaceAll("_", " ")}</RecordCardField>
-              <RecordCardField label="Billing">PHP {Number(booking.billingTotal || booking.paymentAmount || 0).toLocaleString("en-US")}</RecordCardField>
-              <RecordCardField label="Yard location">{booking.assignedAreaName ? [booking.assignedAreaName, booking.assignedSlotNumber ? `Slot ${booking.assignedSlotNumber}` : "No slot"].join(" · ") : "Not assigned"}</RecordCardField>
-              <RecordCardField label="Gate dates"><BookingDatesCell inDate={booking.inDate} expectedArrivalDate={booking.expectedArrivalDate} outDate={booking.outDate} /></RecordCardField>
-              <RecordCardField label="Last updated">{formatDate(booking.updatedAt)}</RecordCardField>
-            </OperationalRecordCard>
+              <BookingCardDetail label="Client email"><span className="break-all">{booking.clientEmail || "Not provided"}</span></BookingCardDetail>
+              <BookingCardDetail label="Container type">{String(booking.containerType || "Unknown").replaceAll("_", " ")}</BookingCardDetail>
+              <BookingCardDetail label="Classification">{String(booking.containerLoadStatus || "Unknown").replaceAll("_", " ")} · {String(booking.rateType || "Unknown").replaceAll("_", " ")}</BookingCardDetail>
+              <BookingCardDetail label="Billing amount">PHP {Number(booking.billingTotal || booking.paymentAmount || 0).toLocaleString("en-US")}</BookingCardDetail>
+              <BookingCardDetail label="Gate dates"><BookingDatesCell inDate={booking.inDate} expectedArrivalDate={booking.expectedArrivalDate} outDate={booking.outDate} /></BookingCardDetail>
+              <BookingCardDetail label="Last updated">{formatDate(booking.updatedAt)}</BookingCardDetail>
+              {booking.isOverstaying && <p className="col-span-2 rounded-lg bg-red-50 p-2 text-xs font-semibold text-red-700">Overstaying</p>}
+            </BookingMobileCard>
           ))}
         </div>
         <div className="hidden overflow-x-auto md:block">

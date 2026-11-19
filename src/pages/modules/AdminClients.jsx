@@ -244,7 +244,7 @@ const StatCard = ({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`${card} group flex w-full flex-col items-center justify-center gap-1 p-3 text-center transition hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 motion-reduce:hover:translate-y-0 md:flex-row md:items-center md:justify-start md:gap-4 md:p-5 md:text-left ${
+      className={`${card} otli-client-verification-stat group flex min-w-0 w-full flex-col items-center justify-center gap-1 p-2.5 text-center transition hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 motion-reduce:hover:translate-y-0 md:flex-row md:items-center md:justify-start md:gap-4 md:p-5 md:text-left ${
         active ? "ring-2 ring-yard-green/40" : ""
       }`}
     >
@@ -253,11 +253,11 @@ const StatCard = ({
       >
         <Icon size={14} className="md:h-6 md:w-6" />
       </span>
-      <span className="flex flex-col items-center md:items-start">
-        <span className="block truncate text-[10px] font-medium text-slate-600 sm:text-xs md:text-sm">
+      <span className="flex min-w-0 max-w-full flex-col items-center md:items-start">
+        <span className="block max-w-full text-[10px] font-medium leading-tight text-slate-600 sm:text-xs md:text-sm">
           {label}
         </span>
-        <span className="block text-sm font-semibold tabular-nums leading-tight tracking-tight text-yard-navy md:text-3xl">
+        <span className="block text-lg font-semibold tabular-nums leading-tight tracking-tight text-yard-navy md:text-3xl">
           {loading ? "..." : Number(value || 0).toLocaleString("en-US")}
         </span>
       </span>
@@ -616,18 +616,18 @@ const AdminClients = () => {
         : "Email OTP";
 
   return (
-    <div className="space-y-6 px-4 pb-10 sm:px-6">
+    <div className="otli-client-verification-page space-y-5 pb-8 md:space-y-6 md:pb-10">
       <Alert type="success">{message}</Alert>
       <Alert type="error">{error}</Alert>
 
       {/* Hero + stats */}
       <div>
-        <section className="relative overflow-hidden rounded-3xl bg-yard-navy px-6 pb-20 pt-8 text-white md:px-10 md:pt-10">
+        <section className="otli-client-verification-hero relative overflow-hidden rounded-3xl bg-yard-navy px-5 pb-16 pt-6 text-white md:px-10 md:pb-20 md:pt-10">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute -right-24 -top-32 h-96 w-96 rounded-full bg-emerald-400/20 blur-3xl"
           />
-          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="relative flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between lg:gap-5">
             <div>
               <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
                 Client verification
@@ -646,7 +646,7 @@ const AdminClients = () => {
                   setNewClientError("");
                   setShowAddClient(true);
                 }}
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-yard-navy shadow-sm transition hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 lg:mt-0 lg:w-auto lg:py-2.5"
+                className="mt-2 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-yard-navy shadow-sm transition hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 lg:mt-0 lg:w-auto lg:py-2.5"
               >
                 <Plus size={17} /> Add client
               </button>
@@ -654,7 +654,7 @@ const AdminClients = () => {
           </div>
         </section>
 
-        <div className="relative z-10 -mt-12 mx-auto grid w-full max-w-7xl grid-cols-3 gap-2 sm:gap-3 md:gap-4 px-4 md:px-8">
+        <div className="otli-client-verification-kpis relative z-10 -mt-10 mx-2 grid grid-cols-3 gap-2 md:-mt-12 md:mx-8 md:gap-4">
           <StatCard
             icon={Clock3}
             tone="amber"
@@ -689,7 +689,7 @@ const AdminClients = () => {
       <section className={`${card} overflow-hidden`}>
         {/* UPDATED: Made header sticky with solid background and backdrop blur */}
         <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-slate-100">
-          <div className="flex flex-col gap-4 p-5 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-col gap-4 p-4 sm:p-5 xl:flex-row xl:items-center xl:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-yard-navy">
                 Client registrations

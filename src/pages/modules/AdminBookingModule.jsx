@@ -38,6 +38,7 @@ import { useAuthStore } from "../../stores/authStore";
 import { hasModulePermission } from "../../lib/permissions";
 import { printBookingDocument } from "../../lib/printDocument";
 import TableLoadingRow from "../../components/table/TableLoadingRow";
+import BookingMobileCard, { BookingCardDetail } from "../../components/table/BookingMobileCard"
 
 const statusLabels = {
   pending_admin_approval: "Pending Admin Approval",
@@ -3106,82 +3107,67 @@ const AdminBookingModule = ({ mode }) => {
           </table>
         </div>
 
-        {/* Mobile cards */}
-        <div className="space-y-3 p-3 md:hidden">
+        {/* Mobile cards: same compact, action-safe layout in all five workflows. */}
+        <div className="space-y-3 p-3 md:hidden" aria-label="Booking workflow records">
           {loading && bookings.length === 0 && (
-            <div
-              className="space-y-3"
-              aria-busy="true"
-              aria-label="Loading booking records"
-            >
+            <div className="space-y-3" aria-busy="true" aria-label="Loading booking records">
               {[0, 1, 2].map((item) => (
-                <div
-                  key={item}
-                  className="h-32 animate-pulse rounded-2xl bg-slate-100"
-                />
+                <div key={item} className="h-56 animate-pulse rounded-2xl bg-slate-100" />
               ))}
             </div>
           )}
-          {pagination.paginatedItems.map((booking) => (
-            <article
-              key={booking.id}
-              tabIndex={0}
-              onClick={() => openBookingModal(booking, "view")}
-              onKeyDown={(event) => {
-                if (
-                  event.target === event.currentTarget &&
-                  event.key === "Enter"
-                )
-                  openBookingModal(booking, "view");
-              }}
-              aria-label={`Open ${booking.bookingReference}`}
-              className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition active:bg-slate-50 ${loading ? "opacity-60" : ""}`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="font-bold text-emerald-700">
-                    {booking.bookingReference}
-                  </p>
-                  <p className="mt-0.5 truncate font-bold text-slate-950">
-                    {booking.containerNumber}
-                  </p>
-                  <p className="truncate text-xs font-medium text-slate-500">
-                    {booking.clientName || "Client"} • {booking.containerSize}ft
-                  </p>
-                </div>
-                <div
-                  onClick={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => event.stopPropagation()}
-                >
-                  {renderRowActions(booking)}
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <StatusBadge
-                  status={booking.status}
-                  label={statusLabels[booking.status]}
-                />
-                <StatusBadge
-                  status={booking.billingStatus}
-                  label={billingLabels[booking.billingStatus]}
-                />
+          {pagination.paginatedItems.map((booking) => {
+            const cashAllowed =
+              ["gateIn", "gateOut"].includes(config.primarySection) &&
+              !getCashPaymentDisabledReason(booking);
+            return (
+              <BookingMobileCard
+                key={booking.id}
+                booking={booking}
+                statusLabel={statusLabels[booking.status] || booking.status}
+                billingLabel={billingLabels[booking.billingStatus] || booking.billingStatus}
+                progressContext={config.primarySection === "gateOut" || config.primarySection === "release" ? "outbound" : "auto"}
+                onOpen={() => openBookingModal(booking, "view")}
+                actions={renderRowActions(booking)}
+                footer={
+                  config.primarySection === "billing" || cashAllowed ? (
+                    <>
+                      {config.primarySection === "billing" && (
+                        <button type="button" onClick={() => openBookingModal(booking, "edit")}
+                          className="min-h-10 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100">
+                          Edit billing
+                        </button>
+                      )}
+                      {cashAllowed && (
+                        <button type="button" onClick={() => openCashPayment(booking)}
+                          className="min-h-10 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100">
+                          Record cash
+                        </button>
+                      )}
+                    </>
+                  ) : null
+                }
+              >
+                <BookingCardDetail label="Container type">
+                  {String(booking.containerType || "Not provided").replaceAll("_", " ")}
+                </BookingCardDetail>
+                <BookingCardDetail label="Classification">
+                  {String(booking.containerLoadStatus || "Unknown").replaceAll("_", " ")} · {String(booking.rateType || "Unknown").replaceAll("_", " ")}
+                </BookingCardDetail>
+                <BookingCardDetail label="Billing amount">
+                  {money(booking.billingTotal || booking.paymentAmount || 0)}
+                </BookingCardDetail>
+                <BookingCardDetail label="Client email">
+                  <span className="break-all">{booking.clientEmail || "Not provided"}</span>
+                </BookingCardDetail>
                 {booking.isOverstaying && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-800 ring-1 ring-inset ring-red-200">
-                    <AlertTriangle size={12} aria-hidden="true" />
-                    Overstaying
-                  </span>
+                  <div className="col-span-2 rounded-lg bg-red-50 p-2 text-xs font-semibold text-red-800">
+                    <AlertTriangle size={13} className="mr-1 inline" /> Overstaying
+                  </div>
                 )}
-              </div>
-              <div className="mt-3 flex items-center justify-between gap-3 text-xs font-medium text-slate-500">
-                <span title={formatDate(getBookingInDate(booking))}>
-                  In: {formatShort(getBookingInDate(booking))}
-                </span>
-                <span className="truncate">
-                  {booking.assignedAreaName || "Yard area pending"}
-                </span>
-              </div>
-            </article>
-          ))}
+              </BookingMobileCard>
+            );
+          })}
           {!loading && bookings.length === 0 && (
             <EmptyState
               filtered={hasActiveSearchOrFilters}

@@ -60,7 +60,7 @@ const Layout = ({ children }) => {
           realtimeEvents={events}
         />
 
-        <main className="p-4 md:p-6 min-h-[calc(100vh-8rem)]">{children}</main>
+        <main className="otli-admin-main min-h-[calc(100vh-8rem)]">{children}</main>
 
         <Footer />
       </div>

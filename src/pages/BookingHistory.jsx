@@ -21,6 +21,8 @@ import { api, getApiError, resolveFileUrl } from "../lib/api";
 import { useBookingStore } from "../stores/bookingStore";
 import { usePagination } from "../hooks/usePagination";
 import TableLoadingRow from "../components/table/TableLoadingRow"
+import BookingMobileCard, { BookingCardDetail } from "../components/table/BookingMobileCard"
+import TableCrudActions from "../components/table/TableCrudActions"
 import { TableSearchField, TableToolbar, TableToolbarSelect } from "../components/table/TableToolbar"
 
 const statusConfig = {
@@ -615,7 +617,32 @@ const BookingHistory = () => {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
+        <div className="space-y-3 p-3 md:hidden" aria-label="Booking history records">
+          {bookingPagination.paginatedItems.map((booking) => (
+            <BookingMobileCard
+              key={booking.id}
+              booking={booking}
+              statusLabel={(statusConfig[booking.status] || [booking.status])[0]}
+              billingLabel={billingLabels[booking.billingStatus] || booking.billingStatus}
+              onOpen={() => openModal("details", booking)}
+              actions={<TableCrudActions compact recordLabel={booking.bookingReference}
+                onView={() => openModal("details", booking)} />}
+              footer={renderAction(booking)}
+            >
+              <BookingCardDetail label="Driver">{booking.driverName || "Not provided"}</BookingCardDetail>
+              <BookingCardDetail label="Truck plate">{booking.truckPlateNumber || "Not provided"}</BookingCardDetail>
+              <BookingCardDetail label="Container type">{String(booking.containerType || "Unknown").replaceAll("_", " ")}</BookingCardDetail>
+              <BookingCardDetail label="Billing amount">PHP {Number(booking.billingTotal || 0).toLocaleString("en-US")}</BookingCardDetail>
+              {booking.recordSource === "legacy_migration" && (
+                <p className="col-span-2 rounded-lg bg-violet-50 p-2 text-xs font-semibold text-violet-800">Legacy record</p>
+              )}
+            </BookingMobileCard>
+          ))}
+          {!loading && bookingPagination.paginatedItems.length === 0 && (
+            <p className="p-6 text-center text-sm text-slate-500">No bookings found.</p>
+          )}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
           <table className="otli-data-table w-full min-w-[1050px] text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
@@ -637,8 +664,9 @@ const BookingHistory = () => {
                     <p className="font-semibold text-emerald-600">
                       {booking.bookingReference}
                     </p>
-                    <p className="text-xs text-slate-400">
-                      {booking.shippingLine}
+                    <p className="text-xs text-slate-500">
+                      <span className="md:hidden">Shipping line: </span>
+                      {booking.shippingLine?.trim() || "Not provided"}
                     </p>
                     {booking.recordSource === "legacy_migration" && <span className="mt-2 inline-flex rounded-full bg-violet-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-violet-700">Legacy Record</span>}
                   </td>
